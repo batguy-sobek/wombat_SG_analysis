@@ -1,0 +1,339 @@
+---
+title: "15_seasonal_alpha_div"
+author: "Colin"
+date: "2025-09-18"
+output: html_document
+---
+
+```{r load_data_alpha, comment="", message=FALSE, warning=FALSE}
+load("../data/all_wombats/data.Rdata")
+#load("../data/all_wombats/alpha_season.Rdata")
+library(car)
+library(rmarkdown)
+library(R.utils)
+library(knitr)
+library(tidyverse)
+library(devtools)
+library(tinytable)
+library(broom)
+library(broom.mixed)
+library(janitor)
+
+# For tree handling
+library(ape)
+library(phyloseq)
+library(phytools)
+
+# For plotting
+library(plotly)
+library(ggplot2)
+library(ggrepel)
+library(ggpubr)
+library(ggnewscale)
+library(gridExtra)
+library(ggtreeExtra)
+library(ggtree)
+library(ggh4x)
+library(patchwork)
+library(ggtext)
+
+
+# For statistics
+library(spaa)
+library(vegan)
+library(Rtsne)
+library(geiger)
+library(hilldiv2)
+library(distillR)
+library(ANCOMBC)
+library(lme4)
+library(matrixStats)
+```
+
+## R calculate alpha diversity summary table
+
+```{r alpha_div, comment="", message=FALSE, warning=FALSE, eval=FALSE}
+# Calculate Hill numbers
+
+genome_counts_season <- genome_counts_filt %>%
+  select(!contains("B478_23_EFNP_NB")) %>%
+  select(!contains("EHI")) %>%
+  select(!contains("RUNR"))
+
+genome_tree_season <- keep.tip(genome_tree, tip=genome_counts_season$genome)
+  
+richness <- genome_counts_season %>%
+  column_to_rownames(var = "genome") %>%
+  dplyr::select(where(~ !all(. == 0))) %>%
+  hilldiv(., q = 0) %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::rename(richness = 1) %>%
+  rownames_to_column(var = "sample")
+
+neutral <- genome_counts_season %>%
+  column_to_rownames(var = "genome") %>%
+  dplyr::select(where(~ !all(. == 0))) %>%
+  hilldiv(., q = 1) %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::rename(neutral = 1) %>%
+  rownames_to_column(var = "sample")
+
+phylogenetic <- genome_counts_season %>%
+  column_to_rownames(var = "genome") %>%
+  dplyr::select(where(~ !all(. == 0))) %>%
+  hilldiv(., q = 1, tree = genome_tree_season) %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::rename(phylogenetic = 1) %>%
+  rownames_to_column(var = "sample")
+
+# # Aggregate basal GIFT into elements
+genome_counts_season <- genome_counts_season[genome_counts_season$genome %in% rownames(genome_gifts),]
+genome_counts_season <- genome_counts_season %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0))%>%
+  rownames_to_column(., "genome")
+
+genome_gifts <- genome_gifts[rownames(genome_gifts) %in% genome_counts_season$genome,]
+genome_gifts <- genome_gifts[, colSums(genome_gifts != 0) > 0]
+
+dist <- genome_gifts %>%
+  to.elements(., GIFT_db) %>%
+  traits2dist(., method = "gower")
+
+functional <- genome_counts_season %>%
+  filter(genome %in% rownames(dist)) %>%
+  column_to_rownames(var = "genome") %>%
+  dplyr::select(where(~ !all(. == 0))) %>%
+  hilldiv(., q = 1, dist = dist) %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::rename(functional = 1) %>%
+  rownames_to_column(var = "sample") %>%
+  mutate(functional = if_else(is.nan(functional), 1, functional))
+
+# Merge all metrics
+alpha_div_season <- richness %>%
+  full_join(neutral, by = join_by(sample == sample)) %>%
+  full_join(phylogenetic, by = join_by(sample == sample))%>%
+  full_join(functional, by = join_by(sample == sample))
+```
+
+
+```{r wrap_alpha, warning=FALSE, comments="", message=FALSE, eval=FALSE}
+save(alpha_div_season, file = "../data/all_wombats/alpha_season.Rdata")
+```
+
+## Including Plots
+
+
+```{r alpha_div_wombats_summary_season, comment="",echo=FALSE, message=FALSE, warning=FALSE}
+alpha_div_season %>%
+  pivot_longer(-sample, names_to = "alpha", values_to = "value") %>%
+  left_join(sample_metadata, by = join_by(sample == sample)) %>%
+    group_by(alpha)%>%
+    summarise(
+              spring_mean=mean(value[season=="spring"], na.rm=T),
+              spring_sd=sd(value[season=="spring"], na.rm=T),
+              winter_mean=mean(value[season=="winter"], na.rm=T),
+              winter_sd=sd(value[season=="winter"], na.rm=T)) %>%
+    mutate(
+           spring=str_c(round(spring_mean,2),"±",round(spring_sd,2)),
+           winter=str_c(round(winter_mean,2),"±",round(winter_sd,2))) %>% 
+    dplyr::select(alpha,spring,winter) %>% 
+    tt()
+```
+
+## Shapiro test
+
+```{r alpha_div_shapiro, comment="", message=FALSE, warning=FALSE}
+alpha_div_season %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric=="richness") %>% 
+  summarize(shapiro_p_value = shapiro.test(value)$p.value) %>%
+  pull(shapiro_p_value)
+alpha_div_season %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric=="neutral") %>% 
+  summarize(shapiro_p_value = shapiro.test(value)$p.value) %>%
+  pull(shapiro_p_value)
+alpha_div_season %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric=="phylogenetic") %>% 
+  summarize(shapiro_p_value = shapiro.test(value)$p.value) %>%
+  pull(shapiro_p_value)
+alpha_div_season %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric=="phylogenetic") %>% 
+  summarize(var.test_p_value_phylo = var.test(value ~ season)$p.value) 
+alpha_div_season %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric=="functional") %>% 
+  summarize(shapiro_p_value = shapiro.test(value)$p.value) %>%
+  pull(shapiro_p_value)
+alpha_div_season %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric=="functional") %>% 
+  summarize(var.test_p_functional = var.test(value ~ season)$p.value) 
+```
+
+```{r alpha_div_boxplot_season, comment="",echo=FALSE, message=FALSE, warning=FALSE}
+#Richness
+plot1 <- alpha_div_season %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric=="richness") %>%
+  ggplot(aes(y = value, x = season, group=season, color=season, fill=season)) +
+  geom_jitter(width = 0.2, show.legend = FALSE) +
+  geom_boxplot(width = 0.5, alpha=0.25,outlier.shape = NA, show.legend = FALSE) +
+  stat_compare_means(method = "wilcox.test", show.legend = F, size = 3, label.y = c(850), label.x = c(1.5))+
+  coord_cartesian(xlim = c(1, NA)) +
+  theme_classic() +
+  theme(
+    strip.background = element_blank(),
+    panel.grid.minor.x = element_line(size = .1, color = "grey"),
+    axis.text = element_text(size=10),
+    axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0)),
+    axis.title.x = element_text(margin = margin(t = 20, r = 0, b = 0, l = 0))
+    )+
+  labs(x = "Season", y = "Richness") +
+  scale_color_manual(values = c("#fdae61","#2c7bb6"))
+
+#Neutral
+plot2 <- alpha_div_season %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric=="neutral") %>%
+  ggplot(aes(y = value, x = season, group=season, color=season, fill=season)) +
+  geom_jitter(width = 0.2, show.legend = FALSE) +
+  geom_boxplot(width = 0.5, alpha=0.25,outlier.shape = NA, show.legend = FALSE) +
+  stat_compare_means(method = "wilcox.test",show.legend = F, size = 3, label.y = c(150), label.x = c(1.5))+
+  coord_cartesian(xlim = c(1, NA)) +
+  coord_cartesian(ylim = c(0, 150)) +
+  theme_classic() +
+  theme(
+    strip.background = element_blank(),
+    panel.grid.minor.x = element_line(size = .1, color = "grey"),
+    axis.text = element_text(size=10),
+    axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0)),
+    axis.title.x = element_text(margin = margin(t = 20, r = 0, b = 0, l = 0))
+    )+
+  labs(x = "Season", y = "Neutral") +
+  scale_color_manual(values = c("#fdae61","#2c7bb6"))
+
+#Phylogenetic
+plot3 <- alpha_div_season %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric=="phylogenetic") %>%
+  ggplot(aes(y = value, x = season, group=season, color=season, fill=season)) +
+  geom_jitter(width = 0.2, show.legend = FALSE) +
+  geom_boxplot(width = 0.5, alpha=0.25,outlier.shape = NA, show.legend = FALSE) +
+  stat_compare_means(method = "t.test", show.legend = F, size = 3, label.y = c(8), label.x = c(1.5))+
+  coord_cartesian(xlim = c(1, NA)) +
+  theme_classic() +
+  theme(
+    strip.background = element_blank(),
+    panel.grid.minor.x = element_line(size = .1, color = "grey"),
+    axis.text = element_text(size=10),
+    axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0)),
+    axis.title.x = element_text(margin = margin(t = 20, r = 0, b = 0, l = 0))
+    )+
+  labs(x = "Season", y = "Phylogenetic") +
+  scale_color_manual(values = c("#fdae61","#2c7bb6"))
+
+#Functional
+plot4 <- alpha_div_season %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric=="functional") %>%
+  ggplot(aes(y = value, x = season, group=season, color=season, fill=season)) +
+  geom_jitter(width = 0.2, show.legend = FALSE) +
+  geom_boxplot(width = 0.5, alpha=0.25,outlier.shape = NA, show.legend = FALSE) +
+  stat_compare_means(method = "t.test", show.legend = F, size = 3, label.y = c(1.6), label.x = c(1.5))+
+  coord_cartesian(xlim = c(1, NA)) +
+  theme_classic() +
+  theme(
+    strip.background = element_blank(),
+    panel.grid.minor.x = element_line(size = .1, color = "grey"),
+    axis.text = element_text(size=10),
+    axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0)),
+    axis.title.x = element_text(margin = margin(t = 20, r = 0, b = 0, l = 0))
+    )+
+  labs(x = "Season", y = "Functional") +
+  scale_color_manual(values = c("#fdae61","#2c7bb6"))
+```
+
+```{r alpha_div_plot_together, comment="", echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+alpha_div_season_combined <- plot1+plot2+plot3+plot4
+```
+
+
+```{r div_plot_together, comment="", echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+grid.arrange(arrangeGrob(plot1,plot2,plot3, plot4, ncol = 2))
+```
+
+```{r div_plot_2, comment="", echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.fullwidth=TRUE}
+grid.arrange(arrangeGrob(plot2,plot3))
+```
+
+```{r neutral_species, comment="", echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.fullwidth=TRUE}
+
+ggplotly(
+
+alpha_div_season %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric == "neutral") %>%
+  ggplot(aes(x = season, y = value, colour = season,
+             label = sample, label2 = singlem_fraction, label3 = host_reads)) +
+  geom_jitter(size = 2, alpha = 0.5, height = 0, width = 0.1) +
+  stat_summary(fun = "mean", geom = "crossbar", colour = "black", width = 0.4) +
+  facet_wrap(~reserve, scales = "free") +
+  scale_colour_manual(values = species_colours) +
+  scale_y_continuous(limits = c(0, 120)) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(face = "italic", angle = 90, vjust = 0.5, hjust = 1)
+  ) +
+  labs(y = "Neutral Hill diversity")
+
+) 
+
+```
+
+```{r func_species, comment="", echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.fullwidth=TRUE}
+
+ggplotly(
+
+alpha_div_season %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric == "functional") %>%
+  ggplot(aes(x = season, y = value, colour = season,
+             label = sample, label2 = singlem_fraction, label3 = host_reads)) +
+  geom_jitter(size = 2, alpha = 0.5, height = 0, width = 0.1) +
+  stat_summary(fun = "mean", geom = "crossbar", colour = "black", width = 0.4) +
+  facet_wrap(~host_order, scales = "free") +
+  scale_colour_manual(values = species_colours) +
+  scale_y_continuous(limits = c(0, 2)) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(face = "italic", angle = 90, vjust = 0.5, hjust = 1)
+  ) +
+  labs(y = "Functional Hill diversity")
+
+)
+```
+

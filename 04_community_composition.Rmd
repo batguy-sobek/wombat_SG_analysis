@@ -1,0 +1,522 @@
+# Community composition
+
+## Filter data
+
+```{r load_data_community, comment="", message=FALSE, warning=FALSE}
+load("../data/all_wombats/data.Rdata")
+library(rmarkdown)
+library(R.utils)
+library(knitr)
+library(tidyverse)
+library(devtools)
+library(tinytable)
+library(broom)
+library(broom.mixed)
+library(janitor)
+
+# For tree handling
+library(ape)
+library(phyloseq)
+library(phytools)
+
+# For plotting
+library(plotly)
+library(ggplot2)
+library(ggrepel)
+library(ggpubr)
+library(ggnewscale)
+library(gridExtra)
+library(ggtreeExtra)
+library(ggtree)
+library(ggh4x)
+
+# For statistics
+library(spaa)
+library(vegan)
+library(Rtsne)
+library(geiger)
+library(hilldiv2)
+library(distillR)
+library(ANCOMBC)
+library(lme4)
+library(matrixStats)
+```
+
+Filter samples with high host data
+```{r load_data_host_filtering, comment="", message=FALSE, warning=FALSE, eval=FALSE}
+
+genome_counts_filt <- genome_counts_filt %>%
+  select(one_of(c("genome",sample_metadata$sample)))%>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0))
+genome_counts <- genome_counts_filt
+
+genome_metadata <- genome_metadata %>% 
+  semi_join(., genome_counts_filt, by = "genome") %>% 
+  arrange(match(genome,genome_counts_filt$genome))
+
+genome_tree <- keep.tip(genome_tree, tip=genome_metadata$genome) # keep only MAG tips
+
+#load("data/genome_gifts.Rdata")
+```
+
+## Taxonomy overview 
+
+### Stacked barplot
+
+```{r taxonomy_barplot, fig.height=6, fig.width=10, fig.fullwidth=TRUE}
+genome_counts_filt %>%
+  mutate_at(vars(-genome),~./sum(.)) %>% #apply TSS normalisation
+  pivot_longer(-genome, names_to = "sample", values_to = "count") %>% #reduce to minimum number of columns
+  left_join(., genome_metadata, by = join_by(genome == genome)) %>% #append genome metadata
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>% #append sample metadata
+  filter(count > 0) %>% #filter 0 counts
+  ggplot(., aes(x=sample,y=count, fill=phylum, group=phylum)) + #grouping enables keeping the same sorting of taxonomic units
+    geom_bar(stat="identity", colour="white", linewidth=0.1) + #plot stacked bars with white borders
+    scale_fill_manual(values=phylum_colors) +
+    facet_nested(. ~ host_order+host_species.y,  scales="free") + #facet 
+    guides(fill = guide_legend(ncol = 1)) +
+    theme(
+          axis.title.x = element_blank(),
+          panel.background = element_blank(),
+          panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          strip.background = element_rect(fill = "lightgrey"),
+          strip.text = element_text(size = 12, lineheight = 0.6),
+          strip.placement = "outside",
+          axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+          axis.line = element_line(linewidth = 0.5, linetype = "solid", colour = "black")) +
+   labs(fill="Phylum",y = "Relative abundance",x="Samples")
+
+```
+
+**Number of bacteria phyla**
+
+```{r phyla, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+genome_metadata %>% 
+  filter(domain == "Bacteria")%>%
+  dplyr::select(phylum) %>%
+  unique() %>%
+  pull() %>%
+  length()
+```
+
+**Bacteria phyla in NHNW**
+
+```{r phyla_nhnw, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+
+nhnw <- sample_metadata %>% 
+  filter(host_species=="Lasiorhinus krefftii") %>% 
+  dplyr::select(sample) %>% 
+  pull()
+
+nhnw_genomes <- genome_counts_filt %>% 
+  column_to_rownames("genome") %>% 
+  select(all_of(nhnw)) %>%
+  as.data.frame() %>%
+  filter(rowSums(across(where(is.numeric)))!=0)%>% 
+  rownames_to_column("genome")%>% 
+  dplyr::select(genome) %>% 
+  pull()
+
+genome_metadata %>% 
+  filter(genome %in% nhnw_genomes) %>% 
+  filter(domain == "Bacteria")%>%
+  dplyr::select(phylum) %>%
+  unique() %>%
+  pull() %>%
+  length() 
+```
+
+**Bacterial phyla in shnw**
+
+```{r phyla_shnw, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+
+shnw <- sample_metadata %>% 
+  filter(host_species=="Lasiorhinus latifrons") %>% 
+  dplyr::select(sample) %>% 
+  pull()
+
+shnw_genomes <- genome_counts_filt %>% 
+  column_to_rownames("genome") %>% 
+  select(all_of(shnw)) %>%
+  as.data.frame() %>%
+  filter(rowSums(across(where(is.numeric)))!=0)%>% 
+  rownames_to_column("genome")%>% 
+  dplyr::select(genome) %>% 
+  pull()
+
+genome_metadata %>% 
+  filter(genome %in% shnw_genomes) %>% 
+  filter(domain == "Bacteria")%>%
+  dplyr::select(phylum) %>%
+  unique() %>%
+  pull() %>%
+  length() 
+```
+
+**Bacterial phyla in BNW
+
+```{r phyla_bnw, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+bnw <- sample_metadata %>% 
+  filter(host_species=="Vombatus ursinus") %>% 
+  dplyr::select(sample) %>% 
+  pull()
+
+bnw_genomes <- genome_counts_filt %>% 
+  column_to_rownames("genome") %>% 
+  select(all_of(bnw)) %>%
+  as.data.frame() %>%
+  filter(rowSums(across(where(is.numeric)))!=0)%>% 
+  rownames_to_column("genome")%>% 
+  dplyr::select(genome) %>% 
+  pull()
+
+genome_metadata %>% 
+  filter(genome %in% bnw_genomes) %>% 
+  filter(domain == "Bacteria")%>%
+  dplyr::select(phylum) %>%
+  unique() %>%
+  pull() %>%
+  length() 
+```
+
+
+**Number of Archaeal phyla**
+
+```{r arch, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+genome_metadata %>% 
+  filter(domain == "Archaea")%>%
+  dplyr::select(phylum) %>%
+  unique() %>%
+  pull() %>%
+  length()
+```
+
+**Archaea phyla in nhnw**
+
+```{r arch_nhnw, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+genome_metadata %>% 
+  filter(genome %in% nhnw_genomes) %>% 
+  filter(domain == "Archaea")%>%
+  dplyr::select(phylum) %>%
+  unique() %>%
+  pull() %>%
+  length()
+```
+
+**Archaea phyla in nhnw**
+
+```{r arch_nhnw_tax, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+genome_metadata %>% 
+  filter(genome %in% nhnw_genomes) %>% 
+  filter(domain == "Archaea") %>%
+  dplyr::select(phylum) %>%
+  unique() %>%
+  pull()
+```
+
+**Archaea phyla in shnw**
+
+```{r arch_shnw, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+genome_metadata %>% 
+  filter(genome %in% shnw_genomes) %>% 
+  filter(domain == "Archaea")%>%
+  dplyr::select(phylum) %>%
+  unique() %>%
+  pull() %>%
+  length()
+```
+
+**Archaea phyla in shnw**
+
+```{r arch_shnw_tax, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+genome_metadata %>% 
+  filter(genome %in%shnw_genomes) %>% 
+  filter(domain == "Archaea") %>%
+  dplyr::select(phylum) %>%
+  unique() %>%
+  pull()
+```
+
+**Archaea phyla in bnw**
+
+```{r arch_bnw, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+genome_metadata %>% 
+  filter(genome %in% bnw_genomes) %>% 
+  filter(domain == "Archaea")%>%
+  dplyr::select(phylum) %>%
+  unique() %>%
+  pull() %>%
+  length()
+
+```
+**Archaea phyla in bnw**
+
+```{r arch_bnw_tax, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+genome_metadata %>% 
+  filter(genome %in%bnw_genomes) %>% 
+  filter(domain == "Archaea") %>%
+  dplyr::select(phylum) %>%
+  unique() %>%
+  pull()
+```
+
+
+
+
+### Genus and species annotation
+
+**Number of MAGs without species-level annotation**
+```{r nonspe, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+genome_metadata %>%
+  filter(species == "") %>%
+  summarize(Mag_nospecies = n())%>%
+  select(Mag_nospecies) %>% 
+  pull()
+
+```
+```{r nonspe_phylum, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+total_mag_phylum <- genome_metadata %>%
+  group_by(phylum) %>%
+  summarize(count_total = n())
+genome_metadata %>%
+  filter(species == "") %>%
+  group_by(phylum) %>%
+  summarize(count_nospecies = n()) %>% 
+  left_join(total_mag_phylum, by = join_by(phylum == phylum)) %>% 
+  mutate(percentage=100*count_nospecies/count_total) %>% 
+  tt()
+
+```
+
+**Percentage of MAGs without species-level annotation**
+```{r sp_percet, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+nmags <- nrow(genome_counts_filt)
+nonspecies <- genome_metadata %>%
+    filter(species == "") %>%
+    nrow()
+perct <- nonspecies*100/nmags
+perct
+```
+
+**Number of MAGs without genera-level annotation**
+```{r nongenera, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+nongenera <- genome_metadata %>%
+    filter(genus == "") %>%
+    nrow()
+cat(nongenera)
+```
+
+
+### Phylum relative abundances
+
+```{r taxonomy_phylum_summary, warning=FALSE, comments="", message=FALSE}
+phylum_summary <- genome_counts_filt %>%
+  mutate_at(vars(-genome),~./sum(.)) %>% #apply TSS nornalisation
+  pivot_longer(-genome, names_to = "sample", values_to = "count") %>%
+  left_join(sample_metadata, by = join_by(sample == sample)) %>%
+  left_join(genome_metadata, by = join_by(genome == genome)) %>%
+  group_by(sample,phylum,region, host_species.x) %>%
+  summarise(relabun=sum(count))
+```
+
+```{r taxonomy_boxplot_phylum, warning=FALSE, comments="", message=FALSE, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+phylum_arrange <- phylum_summary %>%
+    group_by(phylum) %>%
+    summarise(mean=mean(relabun)) %>%
+    arrange(-mean) %>%
+    select(phylum) %>%
+    pull()
+
+phylum_summary %>%
+    filter(phylum %in% phylum_arrange) %>%
+    mutate(phylum=factor(phylum,levels=rev(phylum_arrange))) %>%
+    ggplot(aes(x=relabun, y=phylum, group=phylum, color=phylum)) +
+        scale_color_manual(values=phylum_colors[rev(phylum_arrange)]) +
+        geom_jitter(alpha=0.5) + 
+        theme_minimal() + 
+        theme(legend.position="none") +
+        labs(y="Phylum",x="Relative abundance")
+```
+
+#### Origin: NHNW vs SHNW vs BNW
+```{r taxonomy_phylum_summary_origin, warning=FALSE, comments="", message=FALSE}
+phylum_summary %>%
+    group_by(phylum) %>%
+    summarise(total_mean=mean(relabun*100, na.rm=T),
+              total_sd=sd(relabun*100, na.rm=T),
+              nhnw_mean=mean(relabun[host_species.x=="Lasiorhinus krefftii"]*100, na.rm=T),
+              nhnw_sd=sd(relabun[host_species.x=="Lasiorhinus krefftii"]*100, na.rm=T),
+              shnw_mean=mean(relabun[host_species.x=="Lasiorhinus latifrons"]*100, na.rm=T),
+              shnw_sd=sd(relabun[host_species.x=="Lasiorhinus latifrons"]*100, na.rm=T),
+              bnw_mean=mean(relabun[host_species.x=="Vombatus ursinus"]*100, na.rm=T),
+              bnw_sd=sd(relabun[host_species.x=="Vombatus ursinus"]*100, na.rm=T)) %>%
+    mutate(total=str_c(round(total_mean,3),"±",round(total_sd,3)),
+           nhnw=str_c(round(nhnw_mean,3),"±",round(nhnw_sd,3)),
+           shnw=str_c(round(shnw_mean,3),"±",round(shnw_sd,3)),
+           bnw=str_c(round(bnw_mean,3),"±",round(bnw_sd,3))) %>% 
+    arrange(-total_mean) %>% 
+    dplyr::select(phylum,total,nhnw,shnw,bnw)
+```
+
+
+
+```{r taxonomy_jitterplot_phylum, warning=FALSE, comments="", message=FALSE, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+phylum_arrange <- phylum_summary %>%
+    group_by(phylum) %>%
+    summarise(mean=sum(relabun)) %>%
+    arrange(-mean) %>%
+    select(phylum) %>%
+    pull()
+
+phylum_dot <- 
+  phylum_summary %>%
+    left_join(genome_metadata %>% select(phylum,phylum) %>% unique(),by=join_by(phylum==phylum)) %>%
+#    left_join(sample_metadata,by=join_by(sample==sample)) %>%
+    filter(phylum %in% phylum_arrange[1:23]) %>%
+    mutate(phylum=factor(phylum,levels=rev(phylum_arrange[1:23]))) %>%
+    filter(relabun > 0) %>%
+    ggplot(aes(x=relabun, y=phylum, group=phylum, color=phylum)) +
+        scale_color_manual(values=phylum_colors[-8]) +
+        geom_jitter(alpha=0.5) + 
+        facet_grid(.~host_species.x)+
+        theme_minimal() + 
+        theme(axis.text.y = element_text(angle = 45, size = 6),
+              axis.text.x = element_text(size = 6)) +
+        labs(y="Phylum", x="Relative abundance", color="Phylum")
+```
+
+## Taxonomy boxplot
+
+### Family
+
+```{r taxonomy_family_summary, warning=FALSE, comments="", message=FALSE}
+family_summary <- genome_counts_filt %>%
+  mutate_at(vars(-genome),~./sum(.)) %>% #apply TSS normalisation
+  pivot_longer(-genome, names_to = "sample", values_to = "count") %>% #reduce to minimum number of columns
+  left_join(sample_metadata, by = join_by(sample == sample)) %>% #append sample metadata
+  left_join(., genome_metadata, by = join_by(genome == genome)) %>% #append genome metadata
+  group_by(sample, family, host_species.x) %>%
+  summarise(relabun=sum(count))
+```
+
+#### Family: nhnw vs shnw vs bnw
+```{r taxonomy_family_summary_origin, warning=FALSE, comments="", message=FALSE}
+family_summary %>%
+    group_by(family) %>%
+    summarise(total_mean=mean(relabun*100, na.rm=T),
+              total_sd=sd(relabun*100, na.rm=T),
+              nhnw_mean=mean(relabun[host_species.x=="Lasiorhinus krefftii"]*100, na.rm=T),
+              nhnw_sd=sd(relabun[host_species.x=="Lasiorhinus krefftii"]*100, na.rm=T),
+              shnw_mean=mean(relabun[host_species.x=="Lasiorhinus latifrons"]*100, na.rm=T),
+              shnw_sd=sd(relabun[host_species.x=="Lasiorhinus latifrons"]*100, na.rm=T),
+              bnw_mean=mean(relabun[host_species.x=="Vombatus ursinus"]*100, na.rm=T),
+              bnw_sd=sd(relabun[host_species.x=="Vombatus ursinus"]*100, na.rm=T))  %>%
+    mutate(Total=str_c(round(total_mean,2),"±",round(total_sd,2)),
+           nhnw=str_c(round(nhnw_mean,2),"±",round(nhnw_sd,2)),
+           shnw=str_c(round(shnw_mean,2),"±",round(shnw_sd,2)),
+           bnw=str_c(round(bnw_mean,2),"±",round(bnw_sd,2))) %>% 
+    arrange(-bnw_mean) %>% 
+    dplyr::select(family,Total,nhnw,shnw,bnw) %>% 
+    paged_table()
+```
+
+
+```{r taxonomy_jitterplot_family, warning=FALSE, comments="", message=FALSE, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+family_arrange <- family_summary %>%
+    group_by(family) %>%
+    summarise(mean=sum(relabun)) %>%
+    arrange(-mean) %>%
+    select(family) %>%
+    pull()
+
+#family_dot <- 
+  family_summary %>%
+    left_join(genome_metadata %>% select(family,phylum) %>% unique(),by=join_by(family==family)) %>%
+    filter(family %in% family_arrange[1:20]) %>%
+    mutate(family=factor(family,levels=rev(family_arrange[1:20]))) %>%
+    filter(relabun > 0) %>%
+    ggplot(aes(x=relabun, y=family, group=family, color=phylum)) +
+        scale_color_manual(values=phylum_colors[-8]) +
+        geom_jitter(alpha=0.5) + 
+        facet_grid(.~host_species.x)+
+        theme_minimal() + 
+        labs(y="Family", x="Relative abundance", color="Phylum") +
+        theme(#legend.position = "none",
+              axis.text.y = element_text(angle = 45,  size = 6),
+              axis.text.x = element_text(size = 6))
+```
+
+```{r taxonomy_jitterplot_phylum_family, warning=FALSE, comments="", message=FALSE, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+
+fig_2 <- phylum_dot + family_dot + plot_layout(guides = 'collect')
+
+```
+
+
+### Genus
+
+```{r taxonomy_genus_summary, warning=FALSE, comments="", message=FALSE}
+genus_summary <- genome_counts_filt %>%
+  mutate_at(vars(-genome),~./sum(.)) %>% #apply TSS nornalisation
+  pivot_longer(-genome, names_to = "sample", values_to = "count") %>% #reduce to minimum number of columns
+  left_join(sample_metadata, by = join_by(sample == sample)) %>% #append sample metadata
+  left_join(genome_metadata, by = join_by(genome == genome)) %>% #append genome metadata
+  group_by(sample, phylum, genus, host_species.x) %>%
+  summarise(relabun=sum(count)) %>%
+  filter(genus != "") %>%
+  mutate(genus= sub("", "", genus))
+```
+
+### origin and diet
+```{r taxonomy_genera_summary_oridiet, warning=FALSE, comments="", message=FALSE}
+genus_summary %>%
+    group_by(genus) %>%
+    summarise(total_mean=mean(relabun*100, na.rm=T),
+              total_sd=sd(relabun*100, na.rm=T),
+              nhnw_mean=mean(relabun[host_species.x=="Lasiorhinus krefftii"]*100, na.rm=T),
+              nhnw_sd=sd(relabun[host_species.x=="Lasiorhinus krefftii"]*100, na.rm=T),
+              shnw_mean=mean(relabun[host_species.x=="Lasiorhinus latifrons"]*100, na.rm=T),
+              shnw_sd=sd(relabun[host_species.x=="Lasiorhinus latifrons"]*100, na.rm=T),
+              bnw_mean=mean(relabun[host_species.x=="Vombatus ursinus"]*100, na.rm=T),
+              bnw_sd=sd(relabun[host_species.x=="Vombatus ursinus"]*100, na.rm=T)) %>%
+    mutate(Total=str_c(round(total_mean,2),"±",round(total_sd,2)),
+           nhnw=str_c(round(nhnw_mean,2),"±",round(nhnw_sd,2)),
+           shnw=str_c(round(shnw_mean,2),"±",round(shnw_sd,2)),
+           bnw=str_c(round(bnw_mean,2),"±",round(bnw_sd,2))
+           ) %>%
+    arrange(-bnw_mean) %>% 
+    dplyr::select(genus,Total,nhnw,shnw,bnw) %>% 
+    paged_table()
+```
+
+```{r taxonomy_jitterplot_genus, fig.height=14, fig.width=10, fig.fullwidth=TRUE}
+genus_arrange <- genus_summary %>%
+    group_by(genus) %>%
+    summarise(mean=sum(relabun)) %>%
+    filter(genus != "g__")%>%
+    arrange(-mean) %>%
+    select(genus) %>%
+    mutate(genus= sub("^g__", "", genus)) %>%
+    pull()
+
+genus_summary_sort <- genus_summary %>%
+    group_by(genus) %>%
+    summarise(mean=mean(relabun, na.rm=T),sd=sd(relabun, na.rm=T)) %>%
+    arrange(-mean) 
+
+genus_species_dot_plot <- genus_summary %>%
+  mutate(genus=factor(genus, levels=rev(genus_summary_sort %>% pull(genus)))) %>%
+  filter(relabun > 0) %>%
+  ggplot(aes(x=relabun, y=genus, group=genus, color=phylum)) +
+  scale_color_manual(values=phylum_colors) +
+  geom_jitter(alpha=0.5) + 
+  facet_grid(.~host_species.x)+
+  theme_minimal() + 
+  theme(axis.text.y = element_text(size=6))+
+  labs(y="Genus", x="Relative abundance", color="Phylum")
+
+```
+

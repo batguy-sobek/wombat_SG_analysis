@@ -1,0 +1,215 @@
+# Data preparation
+## Raphael Eisenhofer, 2025_06
+
+
+```{r packs, warning=FALSE, comments="", message=FALSE}
+library(tidyverse)
+library(phyloseq)
+library(ape)
+
+```
+
+
+## Load data
+
+Load the original data files outputted by the bioinformatic pipeline.
+
+### Sample metadata
+
+```{r load_sample_metadata, warning=FALSE, comments="", message=FALSE}
+sample_metadata <- read_tsv("./data/all_wombats/metadata.tsv") %>%
+  dplyr::rename(sample = EHI_plaintext,
+                host_order = order,
+                host_species = species)
+```
+
+### Count table. Filter detection in a sample if genome has <50% of bases covered
+### Also normalise by genome size
+
+```{r load_read_counts, warning=FALSE, comments="", message=FALSE}
+#import, transform, normalize, and filter count table
+molten_table <- read_delim("./data/all_wombats/unfiltered_count_table.txt", delim = '\t') %>%
+  pivot_longer(!Genome,
+               names_to = c("sample", ".value"),
+               names_sep = " ") %>%
+  rename("read_count" = "Read") %>%
+  rename("covered_fraction" = "Covered") %>%
+  rename("MAG_length" = "Length")
+
+genome_counts_filt <- molten_table %>%
+  mutate(read_count = if_else(covered_fraction < 0.5, 0, read_count)) %>%
+  mutate(read_count = read_count*200/MAG_length) %>%
+  select(Genome, sample, read_count) %>%
+  pivot_wider(names_from = sample, values_from = read_count)
+
+```
+
+### Genome metadata
+
+```{r load_genome_metadata, warning=FALSE, comments="", message=FALSE}
+
+gtdb <- read_delim("./data/all_wombats/gtdbtk_combined_summary.tsv") %>%
+  select(user_genome, classification) %>%
+  rename(genome = user_genome)
+
+mag_stats <- read_delim("./data/all_wombats/drep_data_tables/genomeInformation.csv") 
+
+winning_mags <- read_delim("./data/all_wombats/drep_data_tables/Widb.csv") %>%
+  mutate(genome = str_replace(genome, ".fa.gz", ""))
+dereped_mags <- winning_mags$genome
+
+nhnw_mags <- read_delim("./data/all_wombats/drep_data_tables/Widb.csv") %>%
+  select(genome) %>%
+  left_join(., mag_stats, by = join_by(genome)) %>%
+  select(genome, completeness, contamination, length) %>%
+  rename(mag_size = length) %>%
+  filter(str_detect(genome, "nhnw")) %>%
+  mutate(genome = str_replace_all(genome, ".gz", "")) %>%
+  left_join(., gtdb, by = join_by(genome)) %>%
+  mutate(classification = str_replace_all(classification, ".__", ""),
+         genome = str_replace_all(genome, ".fa", ""),
+         host_species = "Lasiorhinus krefftii") %>%
+  # Split the classification string into columns for each taxonnomic rank
+  separate(col = classification, sep = ";", into = c("domain", "phylum", "class", "order", "family", "genus", "species"))
+
+# dmb0178 <- read_delim("data/all_wombats/DMB0178_mag_info.tsv")
+# dmb0179 <- read_delim("data/all_wombats/DMB0179_mag_info.tsv")
+ehi_mags <- read_delim("./data/all_wombats/ehi_mag_info.csv") %>%
+  select(mag_name, domain, phylum, class, order, family, genus, species,
+         completeness, contamination, size, host_species) %>%
+  mutate(mag_name = str_replace(mag_name, ".fa", "")) %>%
+  rename(genome = mag_name, mag_size = size) %>%
+  mutate(across(all_of(2:8), ~str_remove(., ".__")))
+
+genome_metadata <- ehi_mags %>%
+  rbind(nhnw_mags) %>%
+  filter(genome %in% dereped_mags) %>%
+  rename(length = mag_size)
+#  arrange(match(genome, genomes))
+```
+
+### Genome tree
+
+```{r load_genome_tree, warning=FALSE, comments="", message=FALSE}
+#Load and bind trees
+archaea_tree <- ape::read.tree("./data/all_wombats/gtdbtk.ar53.classify.tree")
+bacteria_tree <- ape::read.tree("./data/all_wombats/gtdbtk.bac120.classify.tree")
+prokaryote_tree <- bind.tree(archaea_tree, bacteria_tree)
+
+#Prune tree
+genomes <- genome_counts_filt$Genome
+genomes <- str_replace_all(genomes, "$", ".fa")
+output_tree <- ape::keep.tip(prokaryote_tree, genomes)
+
+#Quality-check
+if(length(genomes) == length(output_tree$tip.label)){
+	ape::write.tree(output_tree, "./data/all_wombats/gtdb_combined_tree.tree")
+}else{
+	stop("Mag info and tree tips do not match")
+}
+
+genome_tree <- ape::read.tree("./data/all_wombats/gtdb_combined_tree.tree")
+genome_tree$tip.label <- str_replace_all(genome_tree$tip.label, "'", "") %>%
+  str_replace_all(".fa", "")
+genome_tree <- keep.tip(genome_tree, tip = genome_metadata$genome) # keep only MAG tips
+
+```
+
+## Create working objects
+
+Transform the original data files into working objects for downstream analyses.
+
+### Distill annotations into GIFTs 
+
+```{r distill_annotations, warning=FALSE, comments="", message=FALSE}
+load("./data/all_wombats/genome_gifts_raw.Rdata")
+genome_counts_filt <- genome_counts_filt[genome_counts_filt$Genome %in% rownames(genome_gifts_raw),] 
+rownames(genome_counts_filt) <- NULL
+genome_gifts <- genome_gifts_raw[rownames(genome_gifts_raw) %in% genome_counts_filt$Genome,] 
+```
+
+## Prepare color scheme
+
+[AlberdiLab](www.alberdilab.dk) projects use unified color schemes developed for the [Earth Hologenome Initiative](www.earthhologenome.org), to facilitate figure interpretation.
+
+```{r get_ehi_colors, warning=FALSE, comments="", message=FALSE}
+phylum_colors <- read_tsv("https://raw.githubusercontent.com/earthhologenome/EHI_taxonomy_colour/main/ehi_phylum_colors.tsv") %>%
+  mutate(phylum=str_remove_all(phylum, "p__")) %>%
+  right_join(genome_metadata, by=join_by(phylum == phylum)) %>%
+  arrange(match(genome, genome_tree$tip.label)) %>%
+  select(phylum, colors) %>% 
+  unique() %>%
+  arrange(phylum) %>%
+  pull(colors, name=phylum)
+```
+
+## Prepare a phyloseq object
+
+```{r phyloseq_objects, warning=FALSE, comments="", message=FALSE}
+phylo_samples <- sample_metadata %>% 
+  column_to_rownames("sample") %>% 
+  sample_data() #convert to phyloseq sample_data object
+phylo_genome <- genome_counts_filt %>% 
+  column_to_rownames("Genome") %>% 
+  otu_table(., taxa_are_rows = TRUE)
+phylo_taxonomy <- genome_metadata %>%
+  column_to_rownames("genome") %>% 
+  as.matrix() %>% 
+  tax_table() #convert to phyloseq tax_table object
+phylo_tree <- genome_tree %>%
+  read_tree()
+
+physeq <- phyloseq(phylo_genome, phylo_taxonomy, phylo_samples, phylo_tree)
+physeq_clr <- microbiome::transform(physeq, 'clr')
+
+
+genome_counts_filt <- genome_counts_filt %>%
+  rename( genome=Genome)
+```
+
+## Prepare colour codes for host species
+
+```{r set_colours, warning=FALSE, comments="", message=FALSE}
+
+species_colours <- c(
+  "Lasiorhinus latifrons" = "#8000ff",
+  "Lasiorhinus kreffttii" = "#ffa200",
+  "Vombatus ursinus" = "#ff416d"
+)
+
+```
+
+
+
+```{r genome_annotations, warning=FALSE, comments="", message=FALSE}
+airtable("MAGs", "appWbHBNLE6iAsMRV") %>% #get base ID from Airtable browser URL
+  read_airtable(., fields = c("ID","mag_name","number_genes","anno_url"), id_to_col = TRUE) %>% #get 3 columns from MAGs table
+  filter(mag_name %in% paste0(genome_metadata$genome,".fa")) %>% #filter by MAG name
+  filter(number_genes > 0) %>% #genes need to exist
+  select(anno_url) %>% #list MAG annotation urls
+  pull() %>%
+  read_tsv() %>% #load all tables
+  rename(gene=1, genome=2, contig=3) %>% #rename first 3 columns
+  write_tsv(file="../data/all_wombats/genome_annotations.tsv.xz") #write to overall compressed file
+
+```
+
+## Wrap working objects
+
+All working objects are wrapped into a single Rdata object to facilitate downstream usage.
+
+```{r wrap_working_objects, warning=FALSE, comments="", message=FALSE}
+save(sample_metadata, 
+     genome_metadata, 
+#     read_counts, 
+#     genome_counts, 
+     molten_table,
+     genome_counts_filt, 
+     genome_tree,
+     genome_gifts,
+     phylum_colors,
+     physeq,
+     physeq_clr,
+     species_colours,
+     file = "./data/all_wombats/data.Rdata")
+```

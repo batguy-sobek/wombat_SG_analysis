@@ -1,0 +1,603 @@
+---
+title: "17_beta_div_diff_abund_reserve"
+author: "Colin"
+date: "2025-09-20"
+output: html_document
+---
+
+```{r load_data_packages, comment="", message=FALSE, warning=FALSE, eval=TRUE}
+load("../data/all_wombats/data.Rdata")
+load("../data/all_wombats/beta_reserve.Rdata")
+library(rmarkdown)
+library(R.utils)
+library(knitr)
+library(tidyverse)
+library(devtools)
+library(tinytable)
+library(broom)
+library(broom.mixed)
+library(janitor)
+library(glue)
+
+# For tree handling
+library(ape)
+library(phyloseq)
+library(phytools)
+
+# For plotting
+library(plotly)
+library(ggplot2)
+library(ggrepel)
+library(ggpubr)
+library(ggnewscale)
+library(gridExtra)
+library(ggtreeExtra)
+library(ggtree)
+library(ggh4x)
+library(patchwork)
+
+# For statistics
+library(spaa)
+library(vegan)
+library(Rtsne)
+library(geiger)
+library(hilldiv2)
+library(distillR)
+library(ANCOMBC)
+library(lme4)
+library(matrixStats)
+```
+
+## Calculate beta hill div for reserve
+
+```{r beta_div_nhnw_season, comment="", message=FALSE, warning=FALSE, eval=FALSE}
+genome_counts_filt_reserve <- genome_counts_filt %>%
+  pivot_longer(cols = c(2:88), names_to = "sample",values_to = "count") %>%
+  left_join(sample_metadata, by = "sample") %>%
+  filter(host_species != "Vombatus ursinus") %>%
+  filter(host_species != "Lasiorhinus latifrons") %>%
+  filter(season != "spring") %>%
+  filter(sample != "B478_23_EFNP_NB") %>%
+  filter(sample != "B19_2_23_RUNR") %>%
+  select(genome, sample, count) %>%
+  pivot_wider(names_from = "sample", values_from = "count")
+
+beta_q0n_reserve <- genome_counts_filt_reserve %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 0)
+
+beta_q1n_reserve <- genome_counts_filt_reserve %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 1)
+
+beta_q2n_reserve <- genome_counts_filt_reserve %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 2)
+
+genome_counts_filt_reserve <- genome_counts_filt_reserve %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0))%>%
+  rownames_to_column(., "genome")
+
+genome_tree <- keep.tip(genome_tree, tip=genome_counts_filt_reserve$genome)
+
+beta_q0p_reserve <- genome_counts_filt_reserve %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 0, tree = genome_tree)
+
+beta_q1p_reserve <- genome_counts_filt_reserve %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 1, tree = genome_tree)
+
+beta_q2p_reserve <- genome_counts_filt_reserve %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 2, tree = genome_tree)
+
+genome_counts_filt_reserve <- genome_counts_filt_reserve[genome_counts_filt_reserve$genome %in% rownames(genome_gifts),]
+genome_counts_filt_reserve <- genome_counts_filt_reserve %>%
+  remove_rownames() %>% 
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0))%>%
+  rownames_to_column(., "genome")
+
+genome_gifts1 <- genome_gifts[rownames(genome_gifts) %in% genome_counts_filt_reserve$genome,]
+genome_gifts1 <- genome_gifts1[, colSums(genome_gifts1 != 0) > 0]
+
+dist <- genome_gifts1 %>%
+  to.elements(., GIFT_db) %>%
+  traits2dist(., method = "gower")
+
+beta_q0f_reserve <- genome_counts_filt_reserve %>%
+  #remove_rownames() %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 0, dist = dist)
+
+beta_q1f_reserve <- genome_counts_filt_reserve %>%
+  #remove_rownames() %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 1, dist = dist)
+
+beta_q2f_reserve <- genome_counts_filt_reserve %>%
+  #remove_rownames() %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 2, dist = dist)
+
+sample_metadata_reserve <- sample_metadata %>%
+  filter(host_species != "Vombatus ursinus") %>%
+  filter(host_species != "Lasiorhinus latifrons") %>%
+  filter(sample != "B478_23_EFNP_NB") %>%
+  filter(sample != "B19_2_23_RUNR") %>%
+  filter(season != "spring")
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+save(beta_q0n_reserve, 
+     beta_q1n_reserve,
+     beta_q2n_reserve,
+     beta_q0p_reserve,
+     beta_q1p_reserve,
+     beta_q2p_reserve,
+     beta_q0f_reserve,
+     beta_q1f_reserve,
+     beta_q2f_reserve,
+     genome_counts_filt_reserve,
+     sample_metadata_reserve,
+     genome_metadata,
+     genome_gifts,
+     genome_gifts1,
+     genome_tree,
+     file = "../data/all_wombats/beta_reserve.Rdata")
+```
+
+## q0 reserve richness
+```{r permanova_q0_reserve, comment="", message=FALSE, warning=FALSE}
+set.seed(1234)
+sample_metadata_row <- column_to_rownames(sample_metadata_reserve, "sample") 
+sample_metadata_row <- sample_metadata_row[labels(beta_q0n_reserve$S), ]
+# sample_metadata_trim <- sample_metadata %>%
+#   filter(sample != "EHI01806" & sample != "EHI01812")
+
+betadisper(beta_q0n_reserve$S, sample_metadata_row$reserve) %>% 
+  permutest(., pairwise = TRUE) 
+
+adonis2(beta_q0n_reserve$S ~ reserve, 
+        data = sample_metadata_reserve %>% arrange(match(sample,labels(beta_q0n_reserve$S))), 
+        permutations = 999) %>%
+        broom::tidy() %>%
+        tt()
+```
+
+## Neutral
+```{r permanova_reserve_q1n, comment="", message=FALSE, warning=FALSE}
+set.seed(1234)
+betadisper(beta_q1n_reserve$S, sample_metadata_row$reserve) %>% 
+  permutest(., pairwise = TRUE) 
+
+adonis2(beta_q1n_reserve$S ~ reserve, 
+        data = sample_metadata_reserve %>% arrange(match(sample,labels(beta_q1n_reserve$S))), 
+        permutations = 999) %>%
+        broom::tidy() %>%
+        tt()
+```
+
+## Phylogenetic
+```{r permanova_reserve_q1p, comment="", message=FALSE, warning=FALSE}
+set.seed(1234)
+betadisper(beta_q1p_reserve$S, sample_metadata_row$reserve) %>% 
+  permutest(., pairwise = TRUE)
+adonis2(beta_q1p_reserve$S ~ reserve,
+        data = sample_metadata_reserve %>% arrange(match(sample,labels(beta_q1p_reserve$S))),
+        permutations = 999) %>%
+        broom::tidy() %>%
+        tt()
+```
+
+## Functional
+```{r permanova_q1F_reserve, comment="", message=FALSE, warning=FALSE}
+set.seed(1234)
+betadisper(beta_q1f_reserve$S, sample_metadata_row$reserve) %>% 
+  permutest(., pairwise = TRUE)
+adonis2(beta_q1f_reserve$S ~ reserve,
+        data = sample_metadata_reserve %>% arrange(match(sample,labels(beta_q1f_reserve$S))),
+        permutations = 999) %>%
+        broom::tidy() %>%
+        tt()
+```
+
+## NMDS plots
+```{r beta_div_nmds_richness_plot_median, comment="", message=FALSE, warning=FALSE, fig.height=7, fig.width=10, fig.fullwidth=TRUE}
+
+set.seed(1234)
+beta_rich_reserve <- 
+  #ggplotly(
+
+beta_q0n_reserve$S %>%
+  vegan::metaMDS(., trymax = 500, k = 2, trace=0) %>%
+  vegan::scores() %>%
+  as_tibble(., rownames = "sample") %>%
+  dplyr::left_join(sample_metadata_reserve, by = join_by(sample == sample)) %>%
+  group_by(reserve) %>%
+  mutate(x_cen = mean(NMDS1, na.rm = TRUE)) %>%
+  mutate(y_cen = mean(NMDS2, na.rm = TRUE)) %>%
+  ungroup() %>%
+  ggplot(aes(x = NMDS1, y = NMDS2, color = reserve,
+             label = sample, label1 = singlem_fraction)) +
+    geom_point(size = 4) +
+    #   stat_ellipse(aes(color = beta_q1n_nmds$Groups))+
+    geom_segment(aes(x = x_cen, y = y_cen, xend = NMDS1, yend = NMDS2), alpha = 0.9, show.legend = FALSE) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(size = 12),
+      axis.text.y = element_text(size = 12),
+      axis.title = element_text(size = 12, face = "bold"),
+      axis.text = element_text(face = "bold", size = 12),
+      panel.background = element_blank(),
+      axis.line = element_line(size = 0.5, linetype = "solid", colour = "black"),
+      legend.position = "none"
+    ) +
+  scale_color_manual(values = c("#7b3294","#008837")) +
+    ggtitle("Richness")
+
+#) 
+```
+
+```{r beta_div_nmds_neutral_plot_median_species, comment="", message=FALSE, warning=FALSE, fig.height=7, fig.width=10, fig.fullwidth=TRUE}
+set.seed(1234)
+beta_neutral_reserve <- 
+  #ggplotly(
+
+beta_q1n_reserve$S %>%
+  vegan::metaMDS(., trymax = 500, k = 2, trace=0) %>%
+  vegan::scores() %>%
+  as_tibble(., rownames = "sample") %>%
+  dplyr::left_join(sample_metadata_reserve, by = join_by(sample == sample)) %>%
+  group_by(reserve) %>%
+  mutate(x_cen = mean(NMDS1, na.rm = TRUE)) %>%
+  mutate(y_cen = mean(NMDS2, na.rm = TRUE)) %>%
+  ungroup() %>%
+  ggplot(aes(x = NMDS1, y = NMDS2, color = reserve,
+             label = sample, label1 = singlem_fraction)) +
+    geom_point(size = 4) +
+    #   stat_ellipse(aes(color = beta_q1n_nmds$Groups))+
+    geom_segment(aes(x = x_cen, y = y_cen, xend = NMDS1, yend = NMDS2), alpha = 0.9, show.legend = FALSE) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(size = 12),
+      axis.text.y = element_text(size = 12),
+      axis.title = element_text(size = 12, face = "bold"),
+      axis.text = element_text(face = "bold", size = 12),
+      panel.background = element_blank(),
+      axis.line = element_line(size = 0.5, linetype = "solid", colour = "black"),
+      legend.position = "none"
+    ) +
+  scale_color_manual(values = c("#7b3294","#008837")) +
+    ggtitle("Neutral")
+
+#) 
+
+```
+
+```{r beta_div_nmds_functional_plot_season, comment="", message=FALSE, warning=FALSE, fig.height=7, fig.width=10, fig.fullwidth=TRUE}
+set.seed(1234)
+beta_func_reserve <-
+#ggplotly(
+
+beta_q1f_reserve$S %>%
+  vegan::metaMDS(., trymax = 500, k = 2, trace=0) %>%
+  vegan::scores() %>%
+  as_tibble(., rownames = "sample") %>%
+  dplyr::left_join(sample_metadata_reserve, by = join_by(sample == sample)) %>%
+  group_by(reserve) %>%
+  mutate(x_cen = mean(NMDS1, na.rm = TRUE)) %>%
+  mutate(y_cen = mean(NMDS2, na.rm = TRUE)) %>%
+  ungroup() %>%
+  ggplot(aes(x = NMDS1, y = NMDS2, color = reserve,
+             label = sample, label1 = singlem_fraction)) +
+    geom_point(size = 4) +
+    #   stat_ellipse(aes(color = beta_q1n_nmds$Groups))+
+    geom_segment(aes(x = x_cen, y = y_cen, xend = NMDS1, yend = NMDS2), alpha = 0.9, show.legend = FALSE) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(size = 12),
+      axis.text.y = element_text(size = 12),
+      axis.title = element_text(size = 12, face = "bold"),
+      axis.text = element_text(face = "bold", size = 12),
+      panel.background = element_blank(),
+      axis.line = element_line(size = 0.5, linetype = "solid", colour = "black"),
+      legend.position = "none"
+    ) +
+  scale_color_manual(values = c("#7b3294","#008837")) +
+  ggtitle("Functional")
+#)
+```
+
+```{r beta_div_nmds_phylogenetic_plot_species, comment="", message=FALSE, warning=FALSE, fig.height=7, fig.width=10, fig.fullwidth=TRUE}
+set.seed(1234)
+beta_phylo_reserve <-
+#ggplotly(
+
+beta_q1p_reserve$S %>%
+  vegan::metaMDS(., trymax = 500, k = 2, trace=0) %>%
+  vegan::scores() %>%
+  as_tibble(., rownames = "sample") %>%
+  dplyr::left_join(sample_metadata_reserve, by = join_by(sample == sample)) %>%
+  group_by(reserve) %>%
+  mutate(x_cen = mean(NMDS1, na.rm = TRUE)) %>%
+  mutate(y_cen = mean(NMDS2, na.rm = TRUE)) %>%
+  ungroup() %>%
+  ggplot(aes(x = NMDS1, y = NMDS2, color = reserve,
+             label = sample, label1 = singlem_fraction)) +
+    geom_point(size = 4) +
+    #   stat_ellipse(aes(color = beta_q1n_nmds$Groups))+
+    geom_segment(aes(x = x_cen, y = y_cen, xend = NMDS1, yend = NMDS2), alpha = 0.9, show.legend = FALSE) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(size = 12),
+      axis.text.y = element_text(size = 12),
+      axis.title = element_text(size = 12, face = "bold"),
+      axis.text = element_text(face = "bold", size = 12),
+      panel.background = element_blank(),
+      axis.line = element_line(size = 0.5, linetype = "solid", colour = "black"),
+      legend.position = "none"
+    ) +
+  scale_color_manual(values = c("#7b3294","#008837")) +
+  ggtitle("Phylogenetic")
+#)
+```
+
+```{r beta_div_plots_reserve, comment="", message=FALSE, warning=FALSE, fig.height=7, fig.width=10, fig.fullwidth=TRUE}
+beta_nmds_combined_reserve <- 
+  beta_rich_reserve + 
+  beta_neutral_reserve + 
+  beta_phylo_reserve + 
+  beta_func_reserve +
+  plot_layout(guides = "collect")
+```
+
+```{r zero_phylo1_reserve, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+#phyloseq object considering structual zeros
+phylo_samples <- sample_metadata %>%
+                    filter(host_species == "Lasiorhinus krefftii") %>%
+                    filter(season == "winter") %>%
+                    filter(sample != "B478_23_EFNP_NB") %>%
+                    filter(sample != "B19_2_23_RUNR") %>%
+                    column_to_rownames("sample") %>% 
+                    sample_data() #convert to phyloseq sample_data object
+phylo_genome <- genome_counts_filt %>% 
+                    select(!contains("EHI")) %>%
+                    select(!contains("spring")) %>%
+                    select(!contains("B478_23_EFNP_NB")) %>%
+                    select(!contains("B19_2_23_RUNR")) %>%
+                    #filter(!genome %in% structural_zeros$genome) %>% # remove structural zeros, comenting out this line for now as its reomving 90% of genomes 
+                    column_to_rownames("genome") %>% 
+                    mutate_all(~ replace(., . == 0, 0.00001)) %>% #add pseudo counts to avoid structural zero issues (note this approach can be improved!)
+                    otu_table(., taxa_are_rows = TRUE)
+phylo_taxonomy <- genome_metadata %>% 
+                    filter(genome %in% rownames(phylo_genome)) %>% # remove structural zeros
+                    mutate(genome2=genome) %>% #create a pseudo genome name column
+                    column_to_rownames("genome2") %>% 
+                    dplyr::select(domain,phylum,class,order,family,genus,species,genome) %>% #add an additional taxonomic level to ensure genome-level analysis (as no all genomes have species-level taxonomic assignments. Otherwise, ANCOMBC2 aggregates analyses per species)
+                    as.matrix() %>% 
+                    tax_table() #convert to phyloseq tax_table object
+
+physeq_genome_filtered <- phyloseq(phylo_genome, phylo_taxonomy, phylo_samples)
+```
+
+```{r filtertaxa, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+physeq_sample <- prune_taxa(taxa_sums(physeq_genome_filtered)>0, physeq_genome_filtered)
+```
+
+```{r  ancom_phylum_efnp_ref, comment="", echo=FALSE, message=FALSE, warning=FALSE, eval=FALSE}
+ancom_rand_output_phyl_reserve = ancombc2(data = physeq_sample, 
+                  assay_name = "counts", 
+                  tax_level = "phylum", #change to agglomerate analysis to a higher taxonomic range
+                  fix_formula = "reserve", #fixed variable(s)
+                  p_adj_method = "holm", 
+                  pseudo_sens = TRUE,
+                  prv_cut = 0, 
+                  lib_cut = 0, 
+                  s0_perc = 0.05,
+                  group = "reserve", 
+                  struc_zero = FALSE, 
+                  neg_lb = FALSE,
+                  alpha = 0.05, 
+                  n_cl = 2, 
+                  verbose = TRUE,
+                  global = FALSE, 
+                  pairwise = FALSE, 
+                  dunnet = FALSE, 
+                  trend = FALSE,
+                  iter_control = list(tol = 1e-5, max_iter = 20, verbose = FALSE),
+                  em_control = list(tol = 1e-5, max_iter = 100),
+                  mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                  trend_control = NULL)
+```
+
+```{r ancom_rand_phylum_reserve, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+ancom_rand_output_phyl_reserve$res %>%
+  dplyr::select(taxon, lfc_reserveRUNR, p_reserveRUNR) %>%
+  filter(p_reserveRUNR < 0.05) %>%
+  dplyr::arrange(p_reserveRUNR)
+```
+
+```{r ancom_table_phylum_season comment="", echo=FALSE, message=FALSE, warning=FALSE}
+tax <- data.frame(physeq_sample@tax_table) %>%
+  rownames_to_column(., "taxon") %>%
+  mutate_at(vars(phylum, genus), ~ str_replace(., "[dpcofgs]__", ""))%>%
+  select(phylum)%>%
+	unique()
+
+ancombc_rand_table_phylum_reserve <- ancom_rand_output_phyl_reserve$res %>%
+  mutate_at(vars(taxon), ~ str_replace(., "[dpcofgs]__", ""))%>%
+  dplyr::select(taxon, lfc_reserveRUNR, p_reserveRUNR) %>%
+  filter(p_reserveRUNR < 0.05) %>%
+  dplyr::arrange(lfc_reserveRUNR)
+
+  
+colors_alphabetic <- read_tsv("https://raw.githubusercontent.com/earthhologenome/EHI_taxonomy_colour/main/ehi_phylum_colors.tsv") %>%
+  mutate_at(vars(phylum), ~ str_replace(., "[dpcofgs]__", ""))  %>%
+  right_join(tax, by=join_by(phylum == phylum)) %>%
+  dplyr::select(phylum, colors) %>%
+  mutate(colors = str_c(colors, "80"))  %>% #add 80% alpha
+	unique() %>%
+	dplyr::arrange(phylum)
+
+tax_color <- ancombc_rand_table_phylum_reserve %>% 
+  left_join(colors_alphabetic, by=join_by(taxon == phylum)) %>%
+	dplyr::arrange(taxon) %>%
+	dplyr::select(colors) %>%
+	pull()
+```
+
+```{r ancombc_rand_phylum_plot_reserve, comment="", echo=FALSE, message=FALSE, warning=FALSE, fig.height=10, fig.width=8, fig.fullwidth=TRUE}
+
+ancommbc_phylum_reserve <- 
+  ancombc_rand_table_phylum_reserve%>%
+      mutate(taxon=factor(taxon,levels=ancombc_rand_table_phylum_reserve$taxon)) %>%
+ggplot(., aes(x=lfc_reserveRUNR, y=forcats::fct_rev(taxon), fill=taxon)) + #forcats::fct_rev()
+  geom_col() + 
+  scale_fill_manual(values=tax_color) + 
+  geom_hline(yintercept=0) + 
+#  coord_flip()+
+  theme(panel.background = element_blank(),
+        axis.line = element_line(size = 0.5, linetype = "solid", colour = "black"),
+        axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 8),
+        axis.title = element_text(size = 10, face = "bold"),
+        legend.text = element_text(size = 8),
+        legend.title = element_text(size = 10, face = "bold"),
+        legend.position = "right", legend.box = "vertical")+
+  xlab("LFC EFNP vs. RUNR") + 
+  ylab("Phylum")+
+  guides(fill=guide_legend(title="Phylum"))
+```
+
+```{r ancom_rand_genus_efnp_ref, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(1234) #set seed for reproducibility
+ancom_rand_output_reserve_genus = ancombc2(data = physeq_sample, 
+                  assay_name = "counts", 
+                  tax_level = "genus", #change to agglomerate analysis to a higher taxonomic range
+                  fix_formula = "reserve", #fixed variable(s)
+                  p_adj_method = "holm", 
+                  pseudo_sens = TRUE,
+                  prv_cut =0, 
+                  lib_cut = 0, 
+                  s0_perc = 0.05,
+                  group = "reserve", 
+                  struc_zero = TRUE, 
+                  neg_lb = FALSE,
+                  alpha = 0.05, 
+                  n_cl = 2, 
+                  verbose = TRUE,
+                  global = FALSE, 
+                  pairwise = FALSE, 
+                  dunnet = FALSE, 
+                  trend = FALSE,
+                  iter_control = list(tol = 1e-5, max_iter = 20, verbose = FALSE),
+                  em_control = list(tol = 1e-5, max_iter = 100),
+                  mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                  trend_control = NULL)
+```
+
+```{r ancom_rand_genus_efnp_ref, comment="", echo=FALSE, message=FALSE, warning=FALSE}
+tax <- data.frame(physeq_genome_filtered@tax_table) %>%
+  rownames_to_column(., "taxon") %>%
+  mutate_at(vars(phylum, genus), ~ str_replace(., "[dpcofgs]__", ""))%>%
+  select(phylum, genus)%>%
+	unique()
+
+ancombc_rand_table_reserve_genus <- ancom_rand_output_reserve_genus$res %>%
+  mutate_at(vars(taxon), ~ str_replace(., "[dpcofgs]__", ""))%>%
+  dplyr::select(taxon, lfc_reserveRUNR, p_reserveRUNR) %>%
+  filter(p_reserveRUNR < 0.05) %>%
+  #dplyr::arrange(lfc_dietWild)  %>%
+  left_join(tax, by=join_by(taxon == genus))
+  #dplyr::arrange(lfc_dietWild)
+  
+colors_alphabetic <- read_tsv("https://raw.githubusercontent.com/earthhologenome/EHI_taxonomy_colour/main/ehi_phylum_colors.tsv") %>%
+  mutate_at(vars(phylum), ~ str_replace(., "[dpcofgs]__", ""))  %>%
+  right_join(tax, by=join_by(phylum == phylum)) %>%
+  dplyr::select(phylum, colors) %>%
+  mutate(colors = str_c(colors, "80"))  %>% #add 80% alpha
+	unique() %>%
+	dplyr::arrange(phylum)
+
+tax_table <- as.data.frame(unique(ancombc_rand_table_reserve_genus$phylum))
+  
+colnames(tax_table)[1] <- "phylum"
+tax_color <- merge(tax_table, colors_alphabetic, by="phylum")%>%
+	dplyr::arrange(phylum) %>%
+	dplyr::select(colors) %>%
+	pull()
+```
+
+```{r ancombc_rand_genus_plot_reserve, comment="", echo=FALSE, message=FALSE, warning=FALSE, fig.height=12, fig.width=8, fig.fullwidth=TRUE}
+
+genus_matrix <- ancombc_rand_table_reserve_genus%>%
+      mutate(taxon=factor(taxon,levels=ancombc_rand_table_reserve_genus$taxon)) %>%
+      filter(!is.na(phylum))
+
+genus_matrix <- genus_matrix %>% 
+  arrange(desc(-lfc_reserveRUNR)) %>%                
+  slice_head(n = 15) %>%                      
+  bind_rows(                                  
+    genus_matrix %>%
+      arrange(-lfc_reserveRUNR) %>%                      
+      slice_head(n = 15))
+
+tax_table <- as.data.frame(unique(genus_matrix$phylum))
+  
+colnames(tax_table)[1] <- "phylum"
+tax_color <- merge(tax_table, colors_alphabetic, by="phylum")%>%
+	dplyr::arrange(phylum) %>%
+	dplyr::select(colors) %>%
+	pull()
+
+ancombc_reserve_genus <- 
+  genus_matrix %>%      
+  ggplot(., aes(x=lfc_reserveRUNR, y=forcats::fct_rev(taxon), fill=phylum)) + #forcats::fct_rev()
+  geom_col() + 
+  scale_fill_manual(values=tax_color) + 
+  geom_hline(yintercept=0) + 
+#  coord_flip()+
+  theme(panel.background = element_blank(),
+        axis.line = element_line(size = 0.5, linetype = "solid", colour = "black"),
+        axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 8),
+        axis.title = element_text(size = 10, face = "bold"),
+        legend.text = element_text(size = 8),
+        legend.title = element_text(size = 10, face = "bold"),
+        legend.position = "right", legend.box = "vertical")+
+  xlab("LFC EFNP vs. RUNR") + 
+  ylab("Genus")+
+  guides(fill=guide_legend(title="Phylum"))
+```
+```{r combined_ancombc_season, comment="", echo=FALSE, message=FALSE, warning=FALSE, fig.height=12, fig.width=8, fig.fullwidth=TRUE}
+ancombc_reserve_combined <- ancommbc_phylum_reserve + ancombc_reserve_genus + plot_layout(guides = 'collect') + plot_annotation(tag_levels = 'A')
+```
+

@@ -1,0 +1,401 @@
+
+```{r load_data_packages, comment="", message=FALSE, warning=FALSE, eval=TRUE}
+load("../data/all_wombats/data.Rdata")
+load("../data/all_wombats/beta_nhnw_shnw.Rdata")
+
+library(rmarkdown)
+library(R.utils)
+library(knitr)
+library(tidyverse)
+library(devtools)
+library(tinytable)
+library(broom)
+library(broom.mixed)
+library(janitor)
+library(glue)
+
+# For tree handling
+library(ape)
+library(phyloseq)
+library(phytools)
+
+# For plotting
+library(plotly)
+library(ggplot2)
+library(ggrepel)
+library(ggpubr)
+library(ggnewscale)
+library(gridExtra)
+library(ggtreeExtra)
+library(ggtree)
+library(ggh4x)
+library(patchwork)
+
+# For statistics
+library(spaa)
+library(vegan)
+library(Rtsne)
+library(geiger)
+library(hilldiv2)
+library(distillR)
+library(ANCOMBC)
+library(lme4)
+library(matrixStats)
+```
+
+## Calculate beta hill div for NHNW and SHNW
+```{r beta_div_nhnw_shnw, comment="", message=FALSE, warning=FALSE, eval=FALSE}
+genome_counts_filt_nshnw <- genome_counts_filt %>%
+  pivot_longer(cols = B2_1_23_RUNR:EHI01172, names_to = "sample",values_to = "count") %>%
+  left_join(sample_metadata, by = "sample") %>%
+  filter(host_species != "Vombatus ursinus") %>%
+  filter(sample != "B478_23_EFNP_NB") %>%
+  filter(sample != "B19_2_23_RUNR") %>%
+  filter(sample != "FS1_1_23_RUNR") %>%
+  filter(sample != "B11_23_RUNR") %>%
+  select(genome, sample, count) %>%
+  pivot_wider(names_from = "sample", values_from = "count")
+
+beta_q0n_nshnw <- genome_counts_filt_nshnw %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 0)
+
+beta_q1n_nshnw <- genome_counts_filt_nshnw %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 1)
+
+beta_q2n_nshnw <- genome_counts_filt_nshnw %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 2)
+
+genome_counts_filt_nshnw <- genome_counts_filt_nshnw %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0))%>%
+  rownames_to_column(., "genome")
+
+genome_tree <- keep.tip(genome_tree, tip=genome_counts_filt_nshnw$genome)
+
+beta_q0p_nshnw <- genome_counts_filt_nshnw %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 0, tree = genome_tree)
+
+beta_q1p_nshnw <- genome_counts_filt_nshnw %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 1, tree = genome_tree)
+
+beta_q2p_nshnw <- genome_counts_filt_nshnw %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 2, tree = genome_tree)
+
+genome_counts_filt_nshnw <- genome_counts_filt_nshnw[genome_counts_filt_nshnw$genome %in% rownames(genome_gifts),]
+genome_counts_filt_nshnw <- genome_counts_filt_nshnw %>%
+  remove_rownames() %>% 
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0))%>%
+  rownames_to_column(., "genome")
+
+genome_gifts1 <- genome_gifts[rownames(genome_gifts) %in% genome_counts_filt_nshnw$genome,]
+genome_gifts1 <- genome_gifts1[, colSums(genome_gifts1 != 0) > 0]
+
+dist <- genome_gifts1 %>%
+  to.elements(., GIFT_db) %>%
+  traits2dist(., method = "gower")
+
+beta_q0f_nshnw <- genome_counts_filt_nshnw %>%
+  #remove_rownames() %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 0, dist = dist)
+
+beta_q1f_nshnw <- genome_counts_filt_nshnw %>%
+  #remove_rownames() %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 1, dist = dist)
+
+beta_q2f_nshnw <- genome_counts_filt_nshnw %>%
+  #remove_rownames() %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0)) %>%
+  hillpair(., q = 2, dist = dist)
+
+sample_metadata_nhnw_shnw <- sample_metadata %>%
+  filter(host_species != "Vombatus ursinus") %>%
+ filter(sample != "B478_23_EFNP_NB") %>%
+  filter(sample != "B19_2_23_RUNR") %>%
+  filter(sample != "FS1_1_23_RUNR") %>%
+  filter(sample != "B11_23_RUNR")
+```
+
+
+```{r save_beta, comment="", message=FALSE,echo=FALSE,warning=FALSE, eval=FALSE}
+save(beta_q0n_nshnw, 
+     beta_q1n_nshnw,
+     beta_q2n_nshnw,
+     beta_q0p_nshnw,
+     beta_q1p_nshnw,
+     beta_q2p_nshnw,
+     beta_q0f_nshnw,
+     beta_q1f_nshnw,
+     beta_q2f_nshnw,
+     genome_counts_filt_nshnw,
+     sample_metadata_nhnw_shnw,
+     genome_metadata,
+     genome_gifts,
+     genome_gifts1,
+     genome_tree,
+     file = "../data/all_wombats/beta_nhnw_shnw_filt.Rdata")
+```
+
+# Set seed
+```{r}
+set.seed(1234)
+```
+
+#PERMAOVA and permdisp
+
+```{r permanova_q0, comment="", message=FALSE, warning=FALSE}
+set.seed(1234)
+sample_metadata_row <- column_to_rownames(sample_metadata_nhnw_shnw, "sample") 
+sample_metadata_row <- sample_metadata_row[labels(beta_q0n_nshnw$S), ]
+# sample_metadata_trim <- sample_metadata %>%
+#   filter(sample != "EHI01806" & sample != "EHI01812")
+
+betadisper(beta_q0n_nshnw$S, sample_metadata_row$host_species) %>% permutest(., pairwise = TRUE) 
+
+adonis2(beta_q0n_nshnw$S ~ host_species, 
+        data = sample_metadata_nhnw_shnw %>% arrange(match(sample,labels(beta_q0n_nshnw$S))), 
+        permutations = 999) %>%
+        broom::tidy() %>%
+        tt()
+```
+
+```{r permanova_hairy_wombats_q1n, comment="", message=FALSE, warning=FALSE}
+set.seed(1234)
+betadisper(beta_q1n_nshnw$S, sample_metadata_row$host_species) %>% permutest(., pairwise = TRUE) 
+
+adonis2(beta_q1n_nshnw$S ~ host_species, 
+        data = sample_metadata_nhnw_shnw %>% arrange(match(sample,labels(beta_q1n_nshnw$S))), 
+        permutations = 999) %>%
+        broom::tidy() %>%
+        tt()
+```
+## Simpsons
+
+```{r permanova_wombats_q2n, comment="", message=FALSE, warning=FALSE}
+betadisper(beta_q2n_nshnw$S, sample_metadata_row$host_species) %>% permutest(., pairwise = TRUE) 
+
+adonis2(beta_q2n_nshnw$S ~ host_species, 
+        data = sample_metadata_nhnw_shnw %>% arrange(match(sample,labels(beta_q2n_nshnw$S))), 
+        permutations = 999) %>%
+        broom::tidy() %>%
+        tt()
+```
+
+
+#### Phylogenetic
+
+```{r permanova_wombats_q1p, comment="", message=FALSE, warning=FALSE}
+set.seed(1234)
+betadisper(beta_q1p_nshnw$S, sample_metadata_row$host_species) %>% permutest(., pairwise = TRUE)
+adonis2(beta_q1p_nshnw$S ~ host_species,
+        data = sample_metadata_nhnw_shnw %>% arrange(match(sample,labels(beta_q1p_nshnw$S))),
+        permutations = 999) %>%
+        broom::tidy() %>%
+        tt()
+
+
+```
+
+#### Functional
+
+```{r permanova_q1F, comment="", message=FALSE, warning=FALSE}
+set.seed(1234)
+betadisper(beta_q1f_nshnw$S, sample_metadata_row$host_species) %>% permutest(., pairwise = TRUE)
+adonis2(beta_q1f_nshnw$S ~ host_species,
+        data = sample_metadata_nhnw_shnw %>% arrange(match(sample,labels(beta_q1f_nshnw$S))),
+        permutations = 999) %>%
+        broom::tidy() %>%
+        tt()
+```
+
+### Beta diversity plots
+
+#### Richness
+```{r beta_div_nmds_richness_plot_median, comment="", message=FALSE, warning=FALSE, fig.height=7, fig.width=10, fig.fullwidth=TRUE}
+set.seed(1234)
+beta_rich_nshnw <- 
+  #ggplotly(
+
+beta_q0n_nshnw$S %>%
+  vegan::metaMDS(., trymax = 500, k = 2, trace=0) %>%
+  vegan::scores() %>%
+  as_tibble(., rownames = "sample") %>%
+  dplyr::left_join(sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+  group_by(host_species) %>%
+  mutate(x_cen = mean(NMDS1, na.rm = TRUE)) %>%
+  mutate(y_cen = mean(NMDS2, na.rm = TRUE)) %>%
+  ungroup() %>%
+  ggplot(aes(x = NMDS1, y = NMDS2, color = host_species, shape = host_species,
+             label = sample, label1 = singlem_fraction)) +
+    geom_point(size = 4, alpha = 0.9) +
+    #   stat_ellipse(aes(color = beta_q1n_nmds$Groups))+
+    geom_segment(aes(x = x_cen, y = y_cen, xend = NMDS1, yend = NMDS2), alpha = 0.9, show.legend = FALSE) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(size = 12),
+      axis.text.y = element_text(size = 12),
+      axis.title = element_text(size = 12, face = "bold"),
+      axis.text = element_text(face = "bold", size = 12),
+      panel.background = element_blank(),
+      axis.line = element_line(size = 0.5, linetype = "solid", colour = "black"),
+      legend.position = "none"
+    ) +
+  scale_color_manual(values = c("#01665e","#5ab4ac")) +
+  scale_shape_manual(values = c(16, 17)) +
+    ggtitle("Richness")
+
+#) 
+
+
+```
+
+#### Neutral (host species)
+
+```{r beta_div_nmds_neutral_plot_median_species, comment="", message=FALSE, warning=FALSE, fig.height=7, fig.width=10, fig.fullwidth=TRUE}
+set.seed(1234)
+beta_neutral_nshnw <- 
+ # ggplotly(
+
+beta_q1n_nshnw$S %>%
+  vegan::metaMDS(., trymax = 500, k = 2, trace=0) %>%
+  vegan::scores() %>%
+  as_tibble(., rownames = "sample") %>%
+  dplyr::left_join(sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+  group_by(host_species) %>%
+  mutate(x_cen = mean(NMDS1, na.rm = TRUE)) %>%
+  mutate(y_cen = mean(NMDS2, na.rm = TRUE)) %>%
+  ungroup() %>%
+  ggplot(aes(x = NMDS1, y = NMDS2, color = host_species, shape = host_species,
+             label = sample, label1 = singlem_fraction)) +
+    geom_point(size = 4, alpha = 0.9) +
+    #   stat_ellipse(aes(color = beta_q1n_nmds$Groups))+
+    geom_segment(aes(x = x_cen, y = y_cen, xend = NMDS1, yend = NMDS2), alpha = 0.9, show.legend = FALSE) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(size = 12),
+      axis.text.y = element_text(size = 12),
+      axis.title = element_text(size = 12, face = "bold"),
+      axis.text = element_text(face = "bold", size = 12),
+      panel.background = element_blank(),
+      axis.line = element_line(size = 0.5, linetype = "solid", colour = "black"),
+      legend.position = "none"
+    ) +
+  scale_color_manual(values = c("#01665e","#5ab4ac")) +
+  scale_shape_manual(values = c(16, 17)) +
+    ggtitle("Neutral")
+
+#) 
+```
+
+
+```{r beta_div_nmds_functional_plot_median_species, comment="", message=FALSE, warning=FALSE, fig.height=7, fig.width=10, fig.fullwidth=TRUE}
+set.seed(1234)
+beta_func_nshnw <-
+#ggplotly(
+
+beta_q1f_nshnw$S %>%
+  vegan::metaMDS(., trymax = 500, k = 2, trace=0) %>%
+  vegan::scores() %>%
+  as_tibble(., rownames = "sample") %>%
+  dplyr::left_join(sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+  group_by(host_species) %>%
+  mutate(x_cen = mean(NMDS1, na.rm = TRUE)) %>%
+  mutate(y_cen = mean(NMDS2, na.rm = TRUE)) %>%
+  ungroup() %>%
+  ggplot(aes(x = NMDS1, y = NMDS2, color = host_species, shape = host_species,
+             label = sample, label1 = singlem_fraction)) +
+    geom_point(size = 4, alpha = 0.9) +
+    #   stat_ellipse(aes(color = beta_q1n_nmds$Groups))+
+    geom_segment(aes(x = x_cen, y = y_cen, xend = NMDS1, yend = NMDS2), alpha = 0.9, show.legend = FALSE) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(size = 12),
+      axis.text.y = element_text(size = 12),
+      axis.title = element_text(size = 12, face = "bold"),
+      axis.text = element_text(face = "bold", size = 12),
+      panel.background = element_blank(),
+      axis.line = element_line(size = 0.5, linetype = "solid", colour = "black"),
+      legend.position = "none"
+    ) +
+  scale_color_manual(values = c("#01665e","#5ab4ac")) +
+  scale_shape_manual(values = c(16, 17)) +
+  ggtitle("Functional")
+#)
+```
+
+
+```{r beta_div_nmds_phylogenetic_plot_species, comment="", message=FALSE, warning=FALSE, fig.height=7, fig.width=10, fig.fullwidth=TRUE}
+set.seed(1234)
+beta_phylo_nshnw <-
+#ggplotly(
+
+beta_q1p_nshnw$S %>%
+  vegan::metaMDS(., trymax = 500, k = 2, trace=0) %>%
+  vegan::scores() %>%
+  as_tibble(., rownames = "sample") %>%
+  dplyr::left_join(sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+  group_by(host_species) %>%
+  mutate(x_cen = mean(NMDS1, na.rm = TRUE)) %>%
+  mutate(y_cen = mean(NMDS2, na.rm = TRUE)) %>%
+  ungroup() %>%
+  ggplot(aes(x = NMDS1, y = NMDS2, color = host_species,
+             label = sample, label1 = singlem_fraction, shape = host_species)) +
+    geom_point(size = 4, alpha = 0.9) +
+    #   stat_ellipse(aes(color = beta_q1n_nmds$Groups))+
+    geom_segment(aes(x = x_cen, y = y_cen, xend = NMDS1, yend = NMDS2), alpha = 0.9, show.legend = FALSE) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(size = 12),
+      axis.text.y = element_text(size = 12),
+      axis.title = element_text(size = 12, face = "bold"),
+      axis.text = element_text(face = "bold", size = 12),
+      panel.background = element_blank(),
+      axis.line = element_line(size = 0.5, linetype = "solid", colour = "black"),
+      legend.text = element_text(size = 10),
+      legend.title = element_text(size = 12),
+      legend.position = "right", legend.box = "vertical"
+    ) +
+  scale_color_manual(values = c("#01665e","#5ab4ac")) +
+  scale_shape_manual(values = c(16, 17)) +
+  ggtitle("Phylogenetic")
+#)
+```
+
+```{r beta_div_plot_species, comment="", message=FALSE, warning=FALSE, fig.height=7, fig.width=10, fig.fullwidth=TRUE}
+
+beta_nmds_combined_species <- beta_rich_nshnw + 
+  beta_neutral_nshnw + 
+  beta_phylo_nshnw + 
+  beta_func_nshnw +
+  plot_layout(guides = "collect")
+
+```
+

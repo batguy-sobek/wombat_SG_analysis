@@ -1,0 +1,192 @@
+---
+title: "Shared MAGS"
+author: "Colin"
+date: "2025-08-15"
+output: html_document
+---
+
+```{r load_data_mag, message=FALSE, warning=FALSE, echo=FALSE}
+load("../data/all_wombats/data.Rdata")
+library(rmarkdown)
+library(R.utils)
+library(knitr)
+library(tidyverse)
+library(devtools)
+library(tinytable)
+library(broom)
+library(broom.mixed)
+library(janitor)
+library(glue)
+
+# For tree handling
+library(ape)
+library(phyloseq)
+library(phytools)
+
+# For plotting
+library(plotly)
+library(ggplot2)
+library(ggrepel)
+library(ggpubr)
+library(ggnewscale)
+library(gridExtra)
+library(ggtreeExtra)
+library(ggtree)
+library(ggh4x)
+
+# For statistics
+library(spaa)
+library(vegan)
+library(Rtsne)
+library(geiger)
+library(hilldiv2)
+library(distillR)
+library(ANCOMBC)
+library(lme4)
+library(matrixStats)
+```
+
+
+```{r create unique mags for each species,  message=FALSE, warning=FALSE}
+ genome_counts_species <- genome_counts_filt %>%
+  pivot_longer(cols = B2_1_23_RUNR:EHI01172, names_to = "sample",values_to = "count") %>%
+  left_join(sample_metadata, by = "sample") %>%
+  select(genome, sample, count, host_species) %>%
+  filter(rowSums(across(where(is.numeric)))!=0)
+  
+
+
+## Unique MAGs
+
+nhnw <- sample_metadata %>% 
+  filter(host_species=="Lasiorhinus krefftii") %>% 
+  dplyr::select(sample) %>% 
+  pull()
+
+shnw <- sample_metadata %>% 
+  filter(host_species=="Lasiorhinus latifrons") %>% 
+  dplyr::select(sample) %>% 
+  pull()
+
+bnw <- sample_metadata %>% 
+  filter(host_species=="Vombatus ursinus") %>% 
+  dplyr::select(sample) %>% 
+  pull()
+
+season <- sample_metadata %>%
+  filter(reserve == "EFNP") %>%
+  dplyr::select(sample) %>% 
+  pull()
+
+spring <- sample_metadata %>%
+  filter(reserve == "EFNP") %>%
+  filter(year == "2022") %>%
+  dplyr::select(sample) %>% 
+  pull()
+
+winter <- sample_metadata %>%
+  filter(reserve == "EFNP") %>%
+  filter(year == "2023") %>%
+  dplyr::select(sample) %>% 
+  pull()
+
+winter_runr <- sample_metadata %>%
+  filter(reserve == "RUNR") %>%
+  dplyr::select(sample) %>% 
+  pull()
+
+nhnw_genomes <- genome_counts_filt %>% 
+  column_to_rownames("genome") %>% 
+  select(all_of(nhnw)) %>%
+  as.data.frame() %>%
+  filter(rowSums(across(where(is.numeric)))!=0)%>% 
+  rownames_to_column("genome")%>% 
+  dplyr::select(genome) %>% 
+  pull()
+
+season_genomes <- genome_counts_filt %>%
+  column_to_rownames("genome") %>%
+  select(all_of(season)) %>%
+  as.data.frame() %>%
+  filter(rowSums(across(where(is.numeric)))!=0)%>% 
+  rownames_to_column("genome")%>% 
+  dplyr::select(genome) %>% 
+  pull()
+
+spring_genomes <- genome_counts_filt %>%
+  column_to_rownames("genome") %>%
+  select(all_of(spring)) %>%
+  as.data.frame() %>%
+  filter(rowSums(across(where(is.numeric)))!=0)%>% 
+  rownames_to_column("genome")%>% 
+  dplyr::select(genome) %>% 
+  pull()
+
+winter_genomes <- genome_counts_filt %>%
+  column_to_rownames("genome") %>%
+  select(all_of(winter)) %>%
+  as.data.frame() %>%
+  filter(rowSums(across(where(is.numeric)))!=0)%>% 
+  rownames_to_column("genome")%>% 
+  dplyr::select(genome) %>% 
+  pull()
+
+runr_genomes <- genome_counts_filt %>%
+  column_to_rownames("genome") %>%
+  select(all_of(winter_runr)) %>%
+  as.data.frame() %>%
+  filter(rowSums(across(where(is.numeric)))!=0)%>% 
+  rownames_to_column("genome")%>% 
+  dplyr::select(genome) %>% 
+  pull()
+
+shnw_genomes <- genome_counts_filt %>% 
+  column_to_rownames("genome") %>% 
+  select(all_of(shnw)) %>%
+  as.data.frame() %>%
+  filter(rowSums(across(where(is.numeric)))!=0)%>% 
+  rownames_to_column("genome")%>% 
+  dplyr::select(genome) %>% 
+  pull()
+
+bnw_genomes <- genome_counts_filt %>% 
+  column_to_rownames("genome") %>% 
+  select(all_of(bnw)) %>%
+  as.data.frame() %>%
+  filter(rowSums(across(where(is.numeric)))!=0)%>% 
+  rownames_to_column("genome") %>%
+  dplyr::select(genome) %>%
+  pull()
+
+sample_genomes <- genome_counts_filt %>%
+  pivot_longer( cols = c(B2_1_23_RUNR:EHI01172), names_to = "sample", values_to = "counts") %>%
+  filter(rowSums(across(where(is.numeric)))!=0)%>% 
+  group_by(sample) %>%
+  summarise(n=n()) %>%
+  left_join(sample_metadata, by = "sample") %>%
+  select("sample", "n", "singlem_fraction")
+
+sample_genomes %>%  
+ggplot(aes(y = n, x = host_species, group=host_species, color=host_species)) +
+  geom_jitter(width = 0.2, show.legend = FALSE) +
+  geom_boxplot(width = 0.5, alpha=0.25,outlier.shape = NA, show.legend = FALSE) 
+
+
+  
+```
+
+
+
+```{r }
+physeq_sub <- subset_samples(physeq_clr, host_species == "Lasiorhinus krefftii" | host_species == "Lasiorhinus latifrons")
+
+hnw_share <- 2
+
+ shared_genome <- filter_taxa(physeq_sub, function(x) sum(x >= 1) == hnw_share, TRUE)
+ 
+ shared_genome_table <- otu_table(shared_genome)
+ 
+ shared_genom_df <- as.data.frame(shared_genome_table)
+```
+
+

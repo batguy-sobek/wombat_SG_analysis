@@ -1,0 +1,419 @@
+# Alpha diversity
+
+```{r load_data_alpha, comment="", message=FALSE, warning=FALSE}
+load("../data/all_wombats/data.Rdata")
+load("../data/all_wombats/alpha.Rdata")
+library(car)
+library(rmarkdown)
+library(R.utils)
+library(knitr)
+library(tidyverse)
+library(devtools)
+library(tinytable)
+library(broom)
+library(broom.mixed)
+library(janitor)
+
+# For tree handling
+library(ape)
+library(phyloseq)
+library(phytools)
+
+# For plotting
+library(plotly)
+library(ggplot2)
+library(ggrepel)
+library(ggpubr)
+library(ggnewscale)
+library(gridExtra)
+library(ggtreeExtra)
+library(ggtree)
+library(ggh4x)
+library(patchwork)
+library(ggtext)
+
+
+# For statistics
+library(spaa)
+library(vegan)
+library(Rtsne)
+library(geiger)
+library(hilldiv2)
+library(distillR)
+library(ANCOMBC)
+library(lme4)
+library(matrixStats)
+```
+
+## Summary table
+
+```{r alpha_div, comment="", message=FALSE, warning=FALSE, eval=FALSE}
+# Calculate Hill numbers
+genome_counts_filt_nshnw <- genome_counts_filt %>%
+  pivot_longer(cols = B2_1_23_RUNR:EHI01172, names_to = "sample",values_to = "count") %>%
+  left_join(sample_metadata, by = "sample") %>%
+  filter(host_species != "Vombatus ursinus") %>%
+  filter(sample != "B478_23_EFNP_NB") %>%
+  filter(sample != "B19_2_23_RUNR") %>%
+  filter(sample != "FS1_1_23_RUNR") %>%
+  filter(sample != "B11_23_RUNR") %>%
+  select(genome, sample, count) %>%
+  pivot_wider(names_from = "sample", values_from = "count")
+
+genome_tree <- keep.tip(genome_tree, tip=genome_counts_filt_nshnw$genome)
+
+richness <- genome_counts_filt_nshnw %>%
+  column_to_rownames(var = "genome") %>%
+  dplyr::select(where(~ !all(. == 0))) %>%
+  hilldiv(., q = 0) %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::rename(richness = 1) %>%
+  rownames_to_column(var = "sample")
+
+neutral <- genome_counts_filt_nshnw %>%
+  column_to_rownames(var = "genome") %>%
+  dplyr::select(where(~ !all(. == 0))) %>%
+  hilldiv(., q = 1) %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::rename(neutral = 1) %>%
+  rownames_to_column(var = "sample")
+
+phylogenetic <- genome_counts_filt_nshnw %>%
+  column_to_rownames(var = "genome") %>%
+  dplyr::select(where(~ !all(. == 0))) %>%
+  hilldiv(., q = 1, tree = genome_tree) %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::rename(phylogenetic = 1) %>%
+  rownames_to_column(var = "sample")
+
+# # Aggregate basal GIFT into elements
+genome_counts_filt_nshnw <- genome_counts_filt_nshnw[genome_counts_filt_nshnw$genome %in% rownames(genome_gifts),]
+genome_counts_filt_nshnw <- genome_counts_filt_nshnw %>%
+  column_to_rownames(., "genome") %>%
+  filter(rowSums(. != 0, na.rm = TRUE) > 0) %>%
+  select_if(~!all(. == 0))%>%
+  rownames_to_column(., "genome")
+
+genome_gifts <- genome_gifts[rownames(genome_gifts) %in% genome_counts_filt_nshnw$genome,]
+genome_gifts <- genome_gifts[, colSums(genome_gifts != 0) > 0]
+
+dist <- genome_gifts %>%
+  to.elements(., GIFT_db) %>%
+  traits2dist(., method = "gower")
+
+functional <- genome_counts_filt_nshnw %>%
+  filter(genome %in% rownames(dist)) %>%
+  column_to_rownames(var = "genome") %>%
+  dplyr::select(where(~ !all(. == 0))) %>%
+  hilldiv(., q = 1, dist = dist) %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::rename(functional = 1) %>%
+  rownames_to_column(var = "sample") %>%
+  mutate(functional = if_else(is.nan(functional), 1, functional))
+
+sample_metadata_nhnw_shnw <- sample_metadata %>%
+  filter(host_species != "Vombatus ursinus") %>%
+ filter(sample != "B478_23_EFNP_NB") %>%
+  filter(sample != "B19_2_23_RUNR") %>%
+  filter(sample != "FS1_1_23_RUNR") %>%
+  filter(sample != "B11_23_RUNR")
+
+# Merge all metrics
+alpha_div <- richness %>%
+  full_join(neutral, by = join_by(sample == sample)) %>%
+  full_join(phylogenetic, by = join_by(sample == sample))%>%
+  full_join(functional, by = join_by(sample == sample))
+```
+```{r wrap_alpha, warning=FALSE, comments="", message=FALSE, eval=FALSE}
+save(alpha_div, file = "../data/all_wombats/alpha.Rdata")
+```
+
+
+```{r alpha_div_wombats_summary_all, comment="",echo=FALSE, message=FALSE, warning=FALSE}
+alpha_div %>%
+  pivot_longer(-sample, names_to = "alpha", values_to = "value") %>%
+  left_join(sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+    group_by(alpha)%>%
+    summarise(
+              nhnw_mean=mean(value[host_species=="Lasiorhinus krefftii"], na.rm=T),
+              nhnw_sd=sd(value[host_species=="Lasiorhinus krefftii"], na.rm=T),
+              shnw_mean=mean(value[host_species=="Lasiorhinus latifrons"], na.rm=T),
+              shnw_sd=sd(value[host_species=="Lasiorhinus latifrons"], na.rm=T)) %>%
+    mutate(
+           nhnw=str_c(round(nhnw_mean,2),"±",round(nhnw_sd,2)),
+           shnw=str_c(round(shnw_mean,2),"±",round(shnw_sd,2))) %>% 
+    dplyr::select(alpha,nhnw,shnw) %>% 
+    tt()
+```
+
+## NHNW vs SHNW vs BNW
+
+### Shapiro test
+
+```{r alpha_div_shapiro, comment="", message=FALSE, warning=FALSE}
+alpha_div %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+  filter(metric=="richness") %>% 
+  summarize(shapiro_p_value = shapiro.test(value)$p.value) %>%
+  pull(shapiro_p_value)
+alpha_div %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+  filter(metric=="neutral") %>% 
+  summarize(shapiro_p_value = shapiro.test(value)$p.value) %>%
+  pull(shapiro_p_value)
+alpha_div %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+  filter(metric=="phylogenetic") %>% 
+  summarize(shapiro_p_value = shapiro.test(value)$p.value) %>%
+  pull(shapiro_p_value)
+alpha_div %>% # trying a Levene's test to compare 3 groups
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+  filter(metric=="phylogenetic") %>% 
+  summarize(levene.test_p_value_phylo = leveneTest(value ~ host_species)$"Pr(>F)") 
+alpha_div %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+  filter(metric=="functional") %>% 
+  summarize(shapiro_p_value = shapiro.test(value)$p.value) %>%
+  pull(shapiro_p_value)
+alpha_div %>% # trying a Levene's test to compare 3 groups
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+  filter(metric=="functional") %>% 
+  summarize(levene.test_p_functional = leveneTest(value ~ host_species)$"Pr(>F)")
+```
+
+### Plots
+
+```{r alpha_div_boxplot, comment="",echo=FALSE, message=FALSE, warning=FALSE}
+#set up comparisons
+alpha_compare <- list( c("Lasiorhinus krefftii", "Lasiorhinus latifrons"))
+
+#Richness
+plot1 <- alpha_div %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+  filter(metric=="richness") %>%
+  ggplot(aes(y = value, x = host_species, group=host_species, color=host_species)) +
+  geom_jitter(width = 0.2, show.legend = FALSE) +
+  geom_boxplot(width = 0.5, alpha=0.25,outlier.shape = NA, show.legend = FALSE) +
+  # stat_compare_means(comparison = alpha_compare, show.legend = F, size = 3, label.y = c(525,575,550), label.x = c(1.5), position = "identity" ) +
+  stat_compare_means(show.legend = F, size = 3, label.y = c(425), label.x = c(1.5), position = "identity" ) +
+  coord_cartesian(xlim = c(1, NA)) +
+  scale_x_discrete(labels =c("*Lasiorhinus krefftii*", "*Lasiorhinus latifrons*")) +
+  theme_classic() +
+  theme(
+    strip.background = element_blank(),
+    panel.grid.minor.x = element_line(size = .1, color = "grey"),
+    axis.text = element_text(size=10),
+    axis.text.x = element_markdown(),
+    axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0)),
+    axis.title.x = element_blank()
+    )+
+  labs(y = "Richness") +
+  scale_color_manual(values = c("#01665e","#5ab4ac","#8c510a"))
+
+#Neutral
+plot2 <- alpha_div %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+  filter(metric=="neutral") %>%
+  ggplot(aes(y = value, x = host_species, group=host_species, color=host_species)) +
+  geom_jitter(width = 0.2, show.legend = FALSE) +
+  geom_boxplot(width = 0.5, alpha=0.25,outlier.shape = NA, show.legend = FALSE) +
+  stat_compare_means(comparison = alpha_compare, show.legend = F, size = 3, label.y = c(152,160,145), label.x = c(1.5), position = "identity" ) +
+  stat_compare_means(show.legend = F, size = 3, label.y = c(25), label.x = c(1.5), position = "identity" ) +
+  coord_cartesian(xlim = c(1, NA)) +
+  coord_cartesian(ylim = c(0, 165)) +
+  scale_x_discrete(labels =c("*Lasiorhinus krefftii*", "*Lasiorhinus   latifrons*")) +
+  theme_classic() +
+  theme(
+    strip.background = element_blank(),
+    panel.grid.minor.x = element_line(size = .1, color = "grey"),
+    axis.text = element_text(size=10),
+    axis.text.x = element_markdown(),
+    axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0)),
+    axis.title.x = element_blank() 
+    )+
+  labs(y = "Neutral") +
+  scale_color_manual(values = c("#01665e","#5ab4ac","#8c510a")) +
+  scale_fill_manual(labels =c("*Lasiorhinus<br>krefftii*", "*Lasiorhinus<br>latifrons*"))
+
+#Phylogenetic
+plot3 <- alpha_div %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+  filter(metric=="phylogenetic") %>%
+  ggplot(aes(y = value, x = host_species, group=host_species, color=host_species)) +
+  geom_jitter(width = 0.2, show.legend = FALSE) +
+  geom_boxplot(width = 0.5, alpha=0.25,outlier.shape = NA, show.legend = FALSE) +
+  stat_compare_means(comparison = alpha_compare, show.legend = F, size = 3, label.y = c(14.65,15.5,15), label.x = c(1.5), position = "identity" ) +
+  stat_compare_means(show.legend = F, size = 3, label.y = c(8), label.x = c(1.5))+
+  coord_cartesian(xlim = c(1, NA)) +
+  scale_x_discrete(labels =c("*Lasiorhinus krefftii*", "*Lasiorhinus latifrons*")) +
+  theme_classic() +
+  theme(
+    strip.background = element_blank(),
+    panel.grid.minor.x = element_line(size = .1, color = "grey"),
+    axis.text = element_text(size=10),
+    axis.text.x = element_markdown(),
+    axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0)),
+    axis.title.x = element_text(margin = margin(t = 20, r = 0, b = 0, l = 0))
+    )+
+  labs(x = "Host species", y = "Phylogenetic") +
+  scale_color_manual(values = c("#01665e","#5ab4ac","#8c510a"))
+   
+#Functional
+plot4 <- alpha_div %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata_nhnw_shnw, by = join_by(sample == sample)) %>%
+  filter(metric=="functional") %>%
+  ggplot(aes(y = value, x = host_species, group=host_species, color=host_species)) +
+  geom_jitter(width = 0.2, show.legend = FALSE) +
+  geom_boxplot(width = 0.5, alpha=0.25,outlier.shape = NA, show.legend = FALSE) +
+  stat_compare_means(comparison = alpha_compare, show.legend = F, size = 3, label.y = c(1.92,1.95,1.9), label.x = c(1), position = "identity" ) +
+  stat_compare_means(show.legend = F, size = 3, label.y = c(1.4), label.x = c(1))+
+  coord_cartesian(xlim = c(1, NA)) +
+  scale_x_discrete(labels =c("*Lasiorhinus krefftii*", "*Lasiorhinus latifrons*")) +
+  theme_classic() +
+  theme(
+    strip.background = element_blank(),
+    panel.grid.minor.x = element_line(size = .1, color = "grey"),
+    axis.text = element_text(size=10),
+    axis.text.x = element_markdown(),
+    axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0)),
+    axis.title.x = element_text(margin = margin(t = 20, r = 0, b = 0, l = 0))
+    )+
+  labs(x = "Host species", y = "Functional") +
+  scale_color_manual(values = c("#01665e","#5ab4ac","#8c510a"))
+
+
+
+```
+
+```{r alpha_div_boxplot_combined, comment="",echo=FALSE, message=FALSE, warning=FALSE}
+
+ alpha_div_plots <- plot1+plot2+plot3+plot4
+```
+
+
+```{r div_plot_together, comment="", echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+grid.arrange(arrangeGrob(plot1,plot2,plot3, plot4, ncol = 2))
+
+ fig_3 <- plot1 + plot2 + plot3 + plot4
+
+```
+```{r div_plot_2, comment="", echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.fullwidth=TRUE}
+grid.arrange(arrangeGrob(plot2,plot3))
+```
+
+
+```{r richness_species, comment="", echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.fullwidth=TRUE}
+
+ggplotly(
+  
+alpha_div %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric == "richness") %>%
+  ggplot(aes(x = host_species, y = value, colour = host_species,
+             label = sample, label2 = singlem_fraction, label3 = host_reads)) +
+  geom_jitter(size = 2, alpha = 0.5, height = 0, width = 0.1) +
+  stat_summary(fun = "mean", geom = "crossbar", colour = "black", width = 0.4) +
+  facet_wrap(~host_order, scales = "free") +
+  scale_colour_manual(values = species_colours) +
+  scale_y_continuous(limits = c(0, 250)) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(face = "italic", angle = 90, vjust = 0.5, hjust = 1)
+  ) +
+  labs(y = "Richness Hill diversity")
+
+) 
+
+```
+
+```{r phylo_species, comment="", echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.fullwidth=TRUE}
+
+ggplotly(
+
+alpha_div %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric == "phylogenetic") %>%
+  ggplot(aes(x = host_species, y = value, colour = host_species,
+             label = sample, label2 = singlem_fraction, label3 = host_reads)) +
+  geom_jitter(size = 2, alpha = 0.5, height = 0, width = 0.1) +
+  stat_summary(fun = "mean", geom = "crossbar", colour = "black", width = 0.4) +
+  facet_wrap(~host_order, scales = "free") +
+  scale_colour_manual(values = species_colours) +
+  scale_y_continuous(limits = c(0, 10)) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(face = "italic", angle = 90, vjust = 0.5, hjust = 1)
+  ) +
+  labs(y = "Phylogenetic Hill diversity")
+
+) 
+```
+
+```{r neutral_species, comment="", echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.fullwidth=TRUE}
+
+ggplotly(
+
+alpha_div %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric == "neutral") %>%
+  ggplot(aes(x = host_species, y = value, colour = host_species,
+             label = sample, label2 = singlem_fraction, label3 = host_reads)) +
+  geom_jitter(size = 2, alpha = 0.5, height = 0, width = 0.1) +
+  stat_summary(fun = "mean", geom = "crossbar", colour = "black", width = 0.4) +
+  facet_wrap(~host_order, scales = "free") +
+  scale_colour_manual(values = species_colours) +
+  scale_y_continuous(limits = c(0, 120)) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(face = "italic", angle = 90, vjust = 0.5, hjust = 1)
+  ) +
+  labs(y = "Neutral Hill diversity")
+
+) 
+```
+
+
+```{r func_species, comment="", echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.fullwidth=TRUE}
+
+ggplotly(
+
+alpha_div %>%
+  pivot_longer(-sample, names_to = "metric", values_to = "value") %>%
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>%
+  filter(metric == "functional") %>%
+  ggplot(aes(x = host_species, y = value, colour = host_species,
+             label = sample, label2 = singlem_fraction, label3 = host_reads)) +
+  geom_jitter(size = 2, alpha = 0.5, height = 0, width = 0.1) +
+  stat_summary(fun = "mean", geom = "crossbar", colour = "black", width = 0.4) +
+  facet_wrap(~host_order, scales = "free") +
+  scale_colour_manual(values = species_colours) +
+  scale_y_continuous(limits = c(0, 2)) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(face = "italic", angle = 90, vjust = 0.5, hjust = 1)
+  ) +
+  labs(y = "Functional Hill diversity")
+
+)
+```
