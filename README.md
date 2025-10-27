@@ -1,5 +1,5 @@
 # Wombat trifecta
-Genome-resolved metagenomics of faecal samples from all three wombat species.
+Genome-resolved metagenomics of faecal samples from all three wombat species. rmd files are adapted from the EHI standard workflow.
 
 
 To render the bookdown document, run these lines of code:
